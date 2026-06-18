@@ -34,7 +34,6 @@ const SLOTS: Record<string, { n: string; s: string; e: string }[]> = {
 
 const AVATAR_COLORS = ['#0078d4','#bf5af2','#4cd964','#ffd60a','#ff6b6b'];
 const DAY_SHORT = ['Lu','Ma','Mi','Jo','Vi','Sâ','Du'];
-
 const LS_KEY = 'rotaflow_v1';
 
 interface Concediu { n: string; s: string; e: string }
@@ -180,7 +179,9 @@ export default function RotaFlow() {
   const sloturiRef = useRef<Set<string>>(new Set(
     (saved?.echipa ?? ECHIPA_DEFAULT).flatMap((m: Angajat) => m.concedii.map((c: Concediu) => `${c.s}__${c.e}`))
   ));
-  const [sloturiAlocate, setSloturiAlocate] = useState<Set<string>>(new Set());
+  const [sloturiAlocate, setSloturiAlocate] = useState<Set<string>>(new Set(
+    (saved?.echipa ?? ECHIPA_DEFAULT).flatMap((m: Angajat) => m.concedii.map((c: Concediu) => `${c.s}__${c.e}`))
+  ));
 
   const [weekOffset, setWeekOffset] = useState(0);
   const [activeTab, setActiveTab] = useState<'rota'|'luna'|'stats'|'swap'|'log'>('rota');
