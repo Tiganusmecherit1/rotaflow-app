@@ -87,7 +87,7 @@ function inAbsenta(d: Date, m: Angajat, tip: 'CM'|'AN'|'any'): boolean {
   });
 }
 function countZileLucratoare(s: string, e: string): number {
- let d=parseD(s); const ed=parseD(e); let c=0;
+  let d=parseD(s); const ed=parseD(e); let c=0;
   while(d<=ed){const wd=d.getDay();if(wd>0&&wd<6&&!isSarbatoare(d))c++;d=new Date(d.getTime()+86400000);} return c;
 }
 
