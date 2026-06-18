@@ -34,7 +34,6 @@ const SLOTS: Record<string, { n: string; s: string; e: string }[]> = {
 
 const AVATAR_COLORS = ['#0078d4','#bf5af2','#4cd964','#ffd60a','#ff6b6b'];
 const DAY_SHORT = ['Lu','Ma','Mi','Jo','Vi','Sâ','Du'];
-const DAY_LONG = ['Luni','Marți','Miercuri','Joi','Vineri','Sâmbătă','Duminică'];
 const LS_KEY = 'rotaflow_v1';
 
 interface Concediu { n: string; s: string; e: string }
@@ -87,7 +86,7 @@ function inAbsenta(d: Date, m: Angajat, tip: 'CM'|'AN'|'any'): boolean {
   });
 }
 function countZileLucratoare(s: string, e: string): number {
-  let d=parseD(s),ed=parseD(e),c=0;
+  let d=parseD(s); const ed=parseD(e); let c=0;
   while(d<=ed){const wd=d.getDay();if(wd>0&&wd<6&&!isSarbatoare(d))c++;d=new Date(d.getTime()+86400000);} return c;
 }
 
@@ -180,7 +179,9 @@ export default function RotaFlow() {
   const sloturiRef = useRef<Set<string>>(new Set(
     (saved?.echipa ?? ECHIPA_DEFAULT).flatMap((m: Angajat) => m.concedii.map((c: Concediu) => `${c.s}__${c.e}`))
   ));
-  const [sloturiAlocate, setSloturiAlocate] = useState<Set<string>>(new Set(sloturiRef.current));
+  const [sloturiAlocate, setSloturiAlocate] = useState<Set<string>>(new Set(
+    (saved?.echipa ?? ECHIPA_DEFAULT).flatMap((m: Angajat) => m.concedii.map((c: Concediu) => `${c.s}__${c.e}`))
+  ));
 
   const [weekOffset, setWeekOffset] = useState(0);
   const [activeTab, setActiveTab] = useState<'rota'|'luna'|'stats'|'swap'|'log'>('rota');
