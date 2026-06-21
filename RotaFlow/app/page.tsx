@@ -36,12 +36,19 @@ const AVATAR_COLORS = ['#0078d4','#bf5af2','#4cd964','#ffd60a','#ff6b6b'];
 const DAY_SHORT = ['Lu','Ma','Mi','Jo','Vi','Sâ','Du'];
 const LS_KEY = 'rotaflow_v1';
 
-interface Concediu { n: string; s: string; e: string }
-interface Absenta { startDate: string; zile: number; tip: 'CM' | 'AN' }
+interface Concediu { n: string; s: string; e: string; uuid?: string }
+interface Absenta { startDate: string; zile: number; tip: 'CM' | 'AN'; uuid?: string }
 interface Swap { id: string; aId: number; aData: string; bId: number; bData: string; nota: string }
-interface Angajat { id: number; nume: string; zileCO: number; concedii: Concediu[]; absente: Absenta[] }
+interface Angajat { id: number; uuid?: string; nume: string; zileCO: number; concedii: Concediu[]; absente: Absenta[] }
 interface LogEntry { ts: string; msg: string }
 interface SimConcediu { id: string; angajatId: number; start: string; zile: number }
+
+// ─── Tipuri brute din Supabase ───
+interface SbAngajat { id: string; nume: string; pozitie_rotatie: number; zile_co: number; este_sef: boolean; activ: boolean }
+interface SbConcediu { id: string; angajat_id: string; data_start: string; data_sfarsit: string; nume_slot: string | null; zile_lucratoare: number }
+interface SbAbsenta { id: string; angajat_id: string; tip: 'CM' | 'AN'; data_start: string; zile: number }
+interface SbSwap { id: string; solicitant_id: string; solicitant_data: string; partener_id: string; partener_data: string; nota: string | null; status: string; created_at: string }
+interface SbLog { id: string; mesaj: string; created_at: string }
 
 const ECHIPA_DEFAULT: Angajat[] = [
   { id: 0, nume: 'Andrei',     zileCO: 24, concedii: [], absente: [] },
@@ -51,16 +58,96 @@ const ECHIPA_DEFAULT: Angajat[] = [
   { id: 4, nume: 'Ciprian',    zileCO: 24, concedii: [], absente: [] },
 ];
 
-// ─── localStorage helpers ───
-function loadState() {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch { return null; }
+// ─── Adaptor Supabase -> formatul intern Angajat[] ───
+function adapteazaDateDinSupabase(
+  sbAngajati: SbAngajat[],
+  sbConcedii: SbConcediu[],
+  sbAbsente: SbAbsenta[]
+): Angajat[] {
+  return sbAngajati
+    .filter(a => !a.este_sef) // sefu nu intra in rotatia normala
+    .sort((a, b) => a.pozitie_rotatie - b.pozitie_rotatie)
+    .map(a => ({
+      id: a.pozitie_rotatie,
+      uuid: a.id,
+      nume: a.nume,
+      zileCO: a.zile_co,
+      concedii: sbConcedii
+        .filter(c => c.angajat_id === a.id)
+        .map(c => ({
+          n: `${fmtDate(parseDataSb(c.data_start))}–${fmtDate(parseDataSb(c.data_sfarsit))}`,
+          s: c.data_start,
+          e: c.data_sfarsit,
+          uuid: c.id,
+        })),
+      absente: sbAbsente
+        .filter(ab => ab.angajat_id === a.id)
+        .map(ab => ({ startDate: ab.data_start, zile: ab.zile, tip: ab.tip, uuid: ab.id })),
+    }));
 }
-function saveState(data: object) {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch {}
+function parseDataSb(s: string) { return new Date(s + 'T00:00:00'); }
+
+// ─── API helpers — inlocuiesc localStorage ───
+async function fetchToateDatele() {
+  const res = await fetch('/api/data');
+  if (!res.ok) throw new Error('Eroare la incarcarea datelor');
+  return res.json() as Promise<{
+    angajati: SbAngajat[]; concedii: SbConcediu[]; absente: SbAbsenta[];
+    swapuri: SbSwap[]; istoric: SbLog[]; setari: { suplinitor_activ: boolean };
+  }>;
+}
+async function apiAdaugaConcediu(angajat_id: string, data_start: string, data_sfarsit: string, nume_slot: string | null, zile_lucratoare: number) {
+  const res = await fetch('/api/concedii', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ angajat_id, data_start, data_sfarsit, nume_slot, zile_lucratoare }),
+  });
+  if (!res.ok) throw new Error('Eroare la adaugarea concediului');
+  return res.json();
+}
+async function apiStergeConcediu(id: string) {
+  const res = await fetch(`/api/concedii?id=${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Eroare la stergerea concediului');
+  return res.json();
+}
+async function apiAdaugaAbsenta(angajat_id: string, tip: 'CM'|'AN', data_start: string, zile: number) {
+  const res = await fetch('/api/absente', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ angajat_id, tip, data_start, zile }),
+  });
+  if (!res.ok) throw new Error('Eroare la adaugarea absentei');
+  return res.json();
+}
+async function apiSetSuplinitor(activ: boolean) {
+  const res = await fetch('/api/suplinitor', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ activ }),
+  });
+  if (!res.ok) throw new Error('Eroare la actualizarea suplinitorului');
+  return res.json();
+}
+async function apiCreeazaSwap(solicitant_id: string, solicitant_data: string, partener_id: string, partener_data: string, nota: string) {
+  const res = await fetch('/api/swap', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ solicitant_id, solicitant_data, partener_id, partener_data, nota, status: 'aprobat' }),
+  });
+  if (!res.ok) throw new Error('Eroare la crearea swap-ului');
+  return res.json();
+}
+async function apiAdaugaIstoric(mesaj: string) {
+  const res = await fetch('/api/istoric', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mesaj }),
+  });
+  if (!res.ok) console.error('Eroare la adaugarea in istoric');
+  return res.json().catch(() => null);
+}
+async function apiActualizeazaAngajat(id: string, payload: { nume?: string; zile_co?: number }) {
+  const res = await fetch('/api/angajati', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, ...payload }),
+  });
+  if (!res.ok) throw new Error('Eroare la actualizarea angajatului');
+  return res.json();
 }
 
 // ─── Helpers ───
@@ -248,20 +335,16 @@ const PRINT_STYLES = `
 `;
 
 export default function RotaFlow() {
-  // ─── State cu initializare din localStorage ───
-  const saved = useMemo(() => loadState(), []);
+  // ─── State — initial gol, populat din Supabase la montare ───
+  const [echipa, setEchipaRaw] = useState<Angajat[]>([]);
+  const [swapuri, setSwapuriRaw] = useState<Swap[]>([]);
+  const [log, setLogRaw] = useState<LogEntry[]>([]);
+  const [suplinitorActiv, setSuplinitorActivRaw] = useState<boolean>(false);
+  const [seIncarca, setSeIncarca] = useState(true);
+  const [eroareIncarcare, setEroareIncarcare] = useState<string | null>(null);
 
-  const [echipa, setEchipaRaw] = useState<Angajat[]>(saved?.echipa ?? ECHIPA_DEFAULT);
-  const [swapuri, setSwapuriRaw] = useState<Swap[]>(saved?.swapuri ?? []);
-  const [log, setLogRaw] = useState<LogEntry[]>(saved?.log ?? []);
-  const [suplinitorActiv, setSuplinitorActivRaw] = useState<boolean>(saved?.suplinitorActiv ?? false);
-
-  const sloturiRef = useRef<Set<string>>(new Set(
-    (saved?.echipa ?? ECHIPA_DEFAULT).flatMap((m: Angajat) => m.concedii.map((c: Concediu) => `${c.s}__${c.e}`))
-  ));
-  const [sloturiAlocate, setSloturiAlocate] = useState<Set<string>>(new Set(
-    (saved?.echipa ?? ECHIPA_DEFAULT).flatMap((m: Angajat) => m.concedii.map((c: Concediu) => `${c.s}__${c.e}`))
-  ));
+  const sloturiRef = useRef<Set<string>>(new Set());
+  const [sloturiAlocate, setSloturiAlocate] = useState<Set<string>>(new Set());
 
   const [weekOffset, setWeekOffset] = useState(0);
   const [activeTab, setActiveTab] = useState<'rota'|'luna'|'stats'|'swap'|'log'>('rota');
@@ -292,43 +375,73 @@ export default function RotaFlow() {
   const [simPendingAction, setSimPendingAction] = useState<'add'|null>(null);
   const [simPendingPayload, setSimPendingPayload] = useState<SimConcediu|null>(null);
 
-  // ─── Wrappers cu auto-save + log ───
-  const addLog = useCallback((msg: string) => {
-    const entry: LogEntry = { ts: fmtTs(new Date()), msg };
-    setLogRaw(prev => {
-      const next = [entry, ...prev].slice(0, 100);
-      return next;
-    });
+  // ─── Incarcare initiala din Supabase ───
+  const incarcaTotul = useCallback(async () => {
+    try {
+      setEroareIncarcare(null);
+      const { angajati: sbAngajati, concedii: sbConcedii, absente: sbAbsente, swapuri: sbSwapuri, istoric: sbIstoric, setari } = await fetchToateDatele();
+
+      const echipaAdaptata = adapteazaDateDinSupabase(sbAngajati, sbConcedii, sbAbsente);
+      setEchipaRaw(echipaAdaptata);
+
+      const uuidToId = new Map(sbAngajati.filter(a => !a.este_sef).map(a => [a.id, a.pozitie_rotatie]));
+      const swapuriAdaptate: Swap[] = sbSwapuri
+        .filter(s => s.status === 'aprobat')
+        .map(s => ({
+          id: s.id,
+          aId: uuidToId.get(s.solicitant_id) ?? 0,
+          aData: s.solicitant_data,
+          bId: uuidToId.get(s.partener_id) ?? 0,
+          bData: s.partener_data,
+          nota: s.nota ?? '',
+        }));
+      setSwapuriRaw(swapuriAdaptate);
+
+      const logAdaptat: LogEntry[] = sbIstoric.map(l => ({
+        ts: new Date(l.created_at).toLocaleDateString('ro-RO', { day:'2-digit', month:'2-digit', year:'numeric' }) + ' ' + new Date(l.created_at).toLocaleTimeString('ro-RO', { hour:'2-digit', minute:'2-digit' }),
+        msg: l.mesaj,
+      }));
+      setLogRaw(logAdaptat);
+
+      setSuplinitorActivRaw(setari?.suplinitor_activ ?? false);
+
+      const sloturiSet = new Set(echipaAdaptata.flatMap(m => m.concedii.map(c => `${c.s}__${c.e}`)));
+      sloturiRef.current = sloturiSet;
+      setSloturiAlocate(new Set(sloturiSet));
+    } catch (err) {
+      console.error('Eroare la incarcarea datelor din Supabase:', err);
+      setEroareIncarcare('Nu am putut incarca datele. Verifica conexiunea si reincarca pagina.');
+    } finally {
+      setSeIncarca(false);
+    }
   }, []);
 
+  useEffect(() => { incarcaTotul(); }, [incarcaTotul]);
+
+  // ─── Wrappers — scriu direct in Supabase, apoi reincarca starea ───
+  const addLog = useCallback((msg: string) => {
+    const entry: LogEntry = { ts: fmtTs(new Date()), msg };
+    setLogRaw(prev => [entry, ...prev].slice(0, 100));
+    apiAdaugaIstoric(msg).catch(() => {});
+  }, []);
+
+  // setEchipa ramane pentru compatibilitate cu codul existent (actualizeaza UI optimist),
+  // dar persistarea reala se face punctual in fiecare handler (vezi mai jos)
   const setEchipa = useCallback((fn: (prev: Angajat[]) => Angajat[]) => {
-    setEchipaRaw(prev => {
-      const next = fn(prev);
-      saveState({ echipa: next, swapuri, log, suplinitorActiv });
-      return next;
-    });
-  }, [swapuri, log, suplinitorActiv]);
+    setEchipaRaw(prev => fn(prev));
+  }, []);
 
   const setSwapuri = useCallback((fn: (prev: Swap[]) => Swap[]) => {
-    setSwapuriRaw(prev => {
-      const next = fn(prev);
-      saveState({ echipa, swapuri: next, log, suplinitorActiv });
-      return next;
-    });
-  }, [echipa, log, suplinitorActiv]);
+    setSwapuriRaw(prev => fn(prev));
+  }, []);
 
   const setSuplinitorActiv = useCallback((val: boolean | ((p: boolean) => boolean)) => {
     setSuplinitorActivRaw(prev => {
       const next = typeof val === 'function' ? val(prev) : val;
-      saveState({ echipa, swapuri, log, suplinitorActiv: next });
+      apiSetSuplinitor(next).catch(() => {});
       return next;
     });
-  }, [echipa, swapuri, log]);
-
-  // Salveaza log separat cand se schimba
-  useEffect(() => {
-    saveState({ echipa, swapuri, log, suplinitorActiv });
-  }, [log]);
+  }, []);
 
   // ─── Calcule ───
   const weekStart = useMemo(() => {
@@ -379,37 +492,68 @@ export default function RotaFlow() {
     if(sloturiRef.current.has(key)) return;
     sloturiRef.current.add(key); setSloturiAlocate(new Set(sloturiRef.current));
     const zl=countZileLucratoare(slot.s,slot.e);
+    const angajatTarget = echipa[pi];
+    if (!angajatTarget?.uuid) return;
+
     setEchipa(prev=>{
       const next=prev.map((m,i)=>i!==pi?m:{...m,concedii:[...m.concedii,slot],zileCO:Math.max(0,m.zileCO-zl)});
-      addLog(`CO adăugat: ${prev[pi].nume} — ${slot.n}`);
       return next;
     });
-  }, [setEchipa, addLog]);
+    addLog(`CO adăugat: ${angajatTarget.nume} — ${slot.n}`);
+
+    apiAdaugaConcediu(angajatTarget.uuid, slot.s, slot.e, slot.n, zl).catch(err => {
+      console.error('Eroare la salvarea CO in Supabase:', err);
+      incarcaTotul(); // re-sincronizam daca a esuat scrierea
+    });
+  }, [setEchipa, addLog, echipa, incarcaTotul]);
 
   const stergeConcediu = useCallback((pi: number, ci: number) => {
-    setEchipa(prev=>{
-      const c=prev[pi].concedii[ci]; const key=`${c.s}__${c.e}`;
-      sloturiRef.current.delete(key); setSloturiAlocate(new Set(sloturiRef.current));
-      const zl=countZileLucratoare(c.s,c.e);
-      addLog(`CO șters: ${prev[pi].nume} — ${c.n}`);
-      return prev.map((m,i)=>i!==pi?m:{...m,zileCO:Math.min(24,m.zileCO+zl),concedii:m.concedii.filter((_,k)=>k!==ci)});
-    });
-  }, [setEchipa, addLog]);
+    const angajatTarget = echipa[pi];
+    const c = angajatTarget?.concedii[ci];
+    if (!c) return;
+    const key=`${c.s}__${c.e}`;
+    sloturiRef.current.delete(key); setSloturiAlocate(new Set(sloturiRef.current));
+    const zl=countZileLucratoare(c.s,c.e);
+
+    setEchipa(prev=>prev.map((m,i)=>i!==pi?m:{...m,zileCO:Math.min(24,m.zileCO+zl),concedii:m.concedii.filter((_,k)=>k!==ci)}));
+    addLog(`CO șters: ${angajatTarget.nume} — ${c.n}`);
+
+    if (c.uuid) {
+      apiStergeConcediu(c.uuid).catch(err => {
+        console.error('Eroare la stergerea CO din Supabase:', err);
+        incarcaTotul();
+      });
+    }
+  }, [setEchipa, addLog, echipa, incarcaTotul]);
 
   const aplicaUrgenta = () => {
-    setEchipa(prev=>{
-      addLog(`${urgTip} adăugat: ${prev[urgTargetIdx].nume} — ${urgStart} · ${urgZile}z`);
-      return prev.map((m,i)=>i!==urgTargetIdx?m:{...m,absente:[...m.absente,{startDate:urgStart,zile:urgZile,tip:urgTip}]});
-    });
+    const angajatTarget = echipa[urgTargetIdx];
+    if (!angajatTarget?.uuid) return;
+
+    setEchipa(prev=>prev.map((m,i)=>i!==urgTargetIdx?m:{...m,absente:[...m.absente,{startDate:urgStart,zile:urgZile,tip:urgTip}]}));
+    addLog(`${urgTip} adăugat: ${angajatTarget.nume} — ${urgStart} · ${urgZile}z`);
     setShowUrgente(false);
+
+    apiAdaugaAbsenta(angajatTarget.uuid, urgTip, urgStart, urgZile).catch(err => {
+      console.error('Eroare la salvarea absentei in Supabase:', err);
+      incarcaTotul();
+    });
   };
 
   const stergeAbsenta = (pi: number, ai: number) => {
-    setEchipa(prev=>{
-      const a=prev[pi].absente[ai];
-      addLog(`${a.tip} șters: ${prev[pi].nume}`);
-      return prev.map((m,i)=>i!==pi?m:{...m,absente:m.absente.filter((_,k)=>k!==ai)});
-    });
+    const angajatTarget = echipa[pi];
+    const a = angajatTarget?.absente[ai];
+    if (!a) return;
+
+    setEchipa(prev=>prev.map((m,i)=>i!==pi?m:{...m,absente:m.absente.filter((_,k)=>k!==ai)}));
+    addLog(`${a.tip} șters: ${angajatTarget.nume}`);
+
+    if (a.uuid) {
+      fetch(`/api/absente?id=${a.uuid}`, { method: 'DELETE' }).catch(err => {
+        console.error('Eroare la stergerea absentei din Supabase:', err);
+        incarcaTotul();
+      });
+    }
   };
 
   const adaugaSwap = () => {
@@ -419,6 +563,17 @@ export default function RotaFlow() {
     const a=echipa.find(m=>m.id===swAId), b=echipa.find(m=>m.id===swBId);
     addLog(`Swap: ${a?.nume} (${swAData}) ↔ ${b?.nume} (${swBData})${swNota?' — '+swNota:''}`);
     setSwNota('');
+
+    if (a?.uuid && b?.uuid) {
+      apiCreeazaSwap(a.uuid, swAData, b.uuid, swBData, swNota).then(res => {
+        if (res.swap?.id) {
+          setSwapuri(prev => prev.map(s => s.id === nou.id ? { ...s, id: res.swap.id } : s));
+        }
+      }).catch(err => {
+        console.error('Eroare la salvarea swap-ului in Supabase:', err);
+        incarcaTotul();
+      });
+    }
   };
 
   const stergeSwap = (id: string) => {
@@ -486,6 +641,9 @@ export default function RotaFlow() {
   // Aplica rezultatul simularii in calendarul real — converteste SimConcediu in Concediu pe fiecare angajat
   const aplicaSimulareInReal = () => {
     if (simConcedii.length === 0) return;
+
+    const operatiiApi: Promise<unknown>[] = [];
+
     setEchipa(prev => prev.map(m => {
       const concediiAngajat = simConcedii.filter(sc => sc.angajatId === m.id);
       if (concediiAngajat.length === 0) return m;
@@ -495,24 +653,46 @@ export default function RotaFlow() {
         return { n: `${fmtDate(start)}–${fmtDate(end)}`, s: sc.start, e: fmtDateInput(end) };
       });
       const zileTotale = concediiAngajat.reduce((acc, sc) => acc + countZileLucratoare(sc.start, fmtDateInput(new Date(parseD(sc.start).getTime() + (sc.zile-1)*86400000))), 0);
+
+      if (m.uuid) {
+        concediiAngajat.forEach(sc => {
+          const start = parseD(sc.start);
+          const end = new Date(start.getTime() + (sc.zile - 1) * 86400000);
+          const nume_slot = `${fmtDate(start)}–${fmtDate(end)}`;
+          const zl = countZileLucratoare(sc.start, fmtDateInput(end));
+          operatiiApi.push(apiAdaugaConcediu(m.uuid!, sc.start, fmtDateInput(end), nume_slot, zl));
+        });
+      }
+
       return { ...m, concedii: [...m.concedii, ...noiConcedii], zileCO: Math.max(0, m.zileCO - zileTotale) };
     }));
+
     if (simSuplinitor) setSuplinitorActiv(true);
     addLog(`Simulare aplicată: ${simConcedii.length} concedii adăugate în calendarul real`);
     reseteazaSimulare();
     setShowSimulare(false);
+
+    Promise.all(operatiiApi).catch(err => {
+      console.error('Eroare la aplicarea simularii in Supabase:', err);
+      incarcaTotul();
+    });
   };
 
   const salveazaNume = useCallback((i:number)=>{
     const v=tempNume.trim();
-    if(v){
-      setEchipa(prev=>{
-        addLog(`Nume schimbat: ${prev[i].nume} → ${v}`);
-        return prev.map((m,idx)=>idx===i?{...m,nume:v}:m);
-      });
+    const angajatTarget = echipa[i];
+    if(v && angajatTarget){
+      setEchipa(prev=>prev.map((m,idx)=>idx===i?{...m,nume:v}:m));
+      addLog(`Nume schimbat: ${angajatTarget.nume} → ${v}`);
+      if (angajatTarget.uuid) {
+        apiActualizeazaAngajat(angajatTarget.uuid, { nume: v }).catch(err => {
+          console.error('Eroare la salvarea numelui in Supabase:', err);
+          incarcaTotul();
+        });
+      }
     }
     setEditIdx(null);
-  },[tempNume, setEchipa, addLog]);
+  },[tempNume, setEchipa, addLog, echipa, incarcaTotul]);
 
   // ─── PDF complet (luna intreaga) ───
   const generatePDF = () => {
@@ -583,6 +763,31 @@ export default function RotaFlow() {
   }, [lunaStart]);
 
   const inputCls = "w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-[#60cdff]/50 transition-all";
+
+  if (seIncarca) {
+    return (
+      <div className="min-h-screen bg-[#1c1c1e] flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#60cdff] to-[#0078d4] flex items-center justify-center text-[16px] font-black text-white shadow-lg shadow-[#0078d4]/30 mx-auto mb-4 animate-pulse">R</div>
+          <p className="text-zinc-500 text-[13px]">Se încarcă datele din RotaFlow...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (eroareIncarcare) {
+    return (
+      <div className="min-h-screen bg-[#1c1c1e] flex items-center justify-center px-6">
+        <div className="text-center max-w-md">
+          <p className="text-red-400 text-[14px] font-semibold mb-2">Eroare la conectare</p>
+          <p className="text-zinc-500 text-[13px] mb-4">{eroareIncarcare}</p>
+          <button onClick={incarcaTotul} className="bg-[#0078d4] hover:bg-[#0086ef] text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors">
+            Încearcă din nou
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
