@@ -510,7 +510,21 @@ export default function RotaFlow() {
   }, [simWeekOffset]);
   const simDays = useMemo(() => Array.from({length:7},(_,i)=>new Date(simWeekStart.getTime()+i*86400000)), [simWeekStart]);
 
-  const suplinitorAutoActiv = useMemo(() => echipa.some(m => m.absente.some(a => a.tip==='CM'&&a.zile>7)), [echipa]);
+  // Auto-activare suplinitor — fie din CM lung (>7 zile), fie cand orice zi din saptamana
+  // curenta sau urmatoarele 2 saptamani ar ramane cu sub 3 activi (CO simultan, AN, etc.)
+  // Verificarea de "activi" se face STRICT fara suplinitor, ca sa nu existe dependenta circulara.
+  const suplinitorAutoActiv = useMemo(() => {
+    const dinCM = echipa.some(m => m.absente.some(a => a.tip==='CM'&&a.zile>7));
+    if (dinCM) return true;
+
+    const azi = getMonday(new Date());
+    for (let i = 0; i < 21; i++) { // saptamana curenta + urmatoarele 2
+      const d = new Date(azi.getTime() + i * 86400000);
+      const activiFaraSuplinitor = echipa.filter(a => !inCO(d,a) && !inAbsenta(d,a,'any'));
+      if (activiFaraSuplinitor.length < 3) return true;
+    }
+    return false;
+  }, [echipa]);
   const suplinitorFinal = suplinitorActiv || suplinitorAutoActiv;
   const modeAvarie = useMemo(() => echipa.some(m => days.some(d => inAbsenta(d,m,'CM'))), [echipa,days]);
 
@@ -520,6 +534,22 @@ export default function RotaFlow() {
   const alerteOre = useMemo(() => {
     return echipa.filter(m => calcOreSaptamana(m, weekStart, echipa, suplinitorFinal, swapuri) > 48).map(m => m.nume);
   }, [echipa, weekStart, suplinitorFinal, swapuri]);
+
+  // Alerta personal insuficient — verifica fiecare zi din saptamana afisata daca raman sub 3 activi
+  // (acopera CO/CM/AN reale, nu doar in Simulare — sefii vede problema direct in calendarul normal)
+  // criticAchiar = chiar si CU suplinitorul activ tot raman sub 3 -> un singur suplinitor nu ajunge
+  const alertePersonalInsuficient = useMemo(() => {
+    const rezultate: { zi: Date; totalActivi: number; criticChiarCuSuplinitor: boolean }[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart.getTime() + i * 86400000);
+      const activiReali = echipa.filter(a => !inCO(d,a) && !inAbsenta(d,a,'any'));
+      const totalActivi = activiReali.length + (suplinitorFinal ? 1 : 0);
+      if (totalActivi < 3) {
+        rezultate.push({ zi: d, totalActivi, criticChiarCuSuplinitor: suplinitorFinal && totalActivi < 3 });
+      }
+    }
+    return rezultate;
+  }, [echipa, weekStart, suplinitorFinal]);
 
   const calcScor = useCallback((m: Angajat, refDate: Date) => {
     const yr=refDate.getFullYear(), mo=refDate.getMonth();
@@ -982,6 +1012,11 @@ export default function RotaFlow() {
                 <AlertTriangle size={9}/> {alerteOre.join(', ')} &gt;48h/săpt!
               </span>
             )}
+            {alertePersonalInsuficient.length > 0 && (
+              <span className="flex items-center gap-1 bg-amber-950/60 border border-amber-500/40 text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                <AlertTriangle size={9}/> Personal insuficient — {alertePersonalInsuficient.length} {alertePersonalInsuficient.length===1?'zi':'zile'}!
+              </span>
+            )}
           </div>
           <div className="flex gap-1">
             {([['rota','Rotație'],['luna','Calendar'],['stats','Statistici'],['swap','Swap'],['log','Istoric']] as const).map(([t,l])=>(
@@ -1044,6 +1079,22 @@ export default function RotaFlow() {
               <AlertTriangle className="text-red-400 flex-shrink-0" size={16}/>
               <p className="text-red-300 text-[12px]">
                 <span className="font-bold">Atenție Art. 114 Codul Muncii:</span> {alerteOre.join(', ')} depășesc 48h/săptămână în săptămâna curentă!
+              </p>
+            </div>
+          )}
+
+          {/* Alerta personal insuficient */}
+          {alertePersonalInsuficient.length > 0 && (
+            <div className={`border rounded-xl p-3 flex items-center gap-3 no-print ${alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor)?'bg-red-950/50 border-red-500/50':'bg-amber-950/40 border-amber-500/40'}`}>
+              <AlertTriangle className={alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor)?'text-red-400 flex-shrink-0':'text-amber-400 flex-shrink-0'} size={16}/>
+              <p className={alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor)?'text-red-300 text-[12px]':'text-amber-300 text-[12px]'}>
+                <span className="font-bold">
+                  {alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor) ? 'CRITIC — chiar și cu Suplinitorul activ:' : 'Personal insuficient:'}
+                </span>{' '}
+                {alertePersonalInsuficient.map(a=>`${fmtDate(a.zi)} (${a.totalActivi} activi)`).join(', ')} — minim recomandat 3 angajați activi.
+                {alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor)
+                  ? ' Un singur Suplinitor nu este suficient — e nevoie de intervenție manuală (rechemare din concediu sau personal suplimentar).'
+                  : ' Verifică Simulare Concedii sau activează Suplinitorul.'}
               </p>
             </div>
           )}
