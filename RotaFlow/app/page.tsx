@@ -720,9 +720,25 @@ export default function RotaFlow() {
 
   const adaugaSwap = () => {
     if(swAId===swBId) return; // nu poti face swap cu tine insuti, indiferent de date
+    const a=echipa.find(m=>m.id===swAId), b=echipa.find(m=>m.id===swBId);
+    if (!a || !b) return;
+
+    // Blocam swap-ul daca oricare din cele 2 zile NU e o tura reala de lucru (D/S) pentru
+    // persoana care o cedeaza — un swap cu o zi libera/CO/CM/AN nu are acoperire reala,
+    // lasa tura initiala fara nimeni la post.
+    const turaA = getTuraBaza(parseD(swAData), a, echipa, suplinitorFinal);
+    const turaB = getTuraBaza(parseD(swBData), b, echipa, suplinitorFinal);
+    if (turaA.type!=='D' && turaA.type!=='S') {
+      alert(`${a.nume} nu are tură de lucru (D/S) pe ${fmtDate(parseD(swAData))} — swap-ul nu poate fi creat, ar lăsa acea zi fără acoperire.`);
+      return;
+    }
+    if (turaB.type!=='D' && turaB.type!=='S') {
+      alert(`${b.nume} nu are tură de lucru (D/S) pe ${fmtDate(parseD(swBData))} — swap-ul nu poate fi creat, ar lăsa acea zi fără acoperire.`);
+      return;
+    }
+
     const nou: Swap = {id:Date.now().toString(),aId:swAId,aData:swAData,bId:swBId,bData:swBData,nota:swNota};
     setSwapuri(prev=>[...prev,nou]);
-    const a=echipa.find(m=>m.id===swAId), b=echipa.find(m=>m.id===swBId);
     addLog(`Swap: ${a?.nume} (${swAData}) ↔ ${b?.nume} (${swBData})${swNota?' — '+swNota:''}`);
     setSwNota('');
 
@@ -1524,6 +1540,23 @@ export default function RotaFlow() {
                   {swAId===swBId && (
                     <p className="text-[10px] text-red-400 mb-2">Selectează doi angajați diferiți pentru schimb.</p>
                   )}
+                  {(() => {
+                    if (swAId===swBId) return null;
+                    const a=echipa.find(m=>m.id===swAId), b=echipa.find(m=>m.id===swBId);
+                    if (!a||!b) return null;
+                    const turaA=getTuraBaza(parseD(swAData),a,echipa,suplinitorFinal);
+                    const turaB=getTuraBaza(parseD(swBData),b,echipa,suplinitorFinal);
+                    const problemaA = turaA.type!=='D'&&turaA.type!=='S';
+                    const problemaB = turaB.type!=='D'&&turaB.type!=='S';
+                    if (!problemaA && !problemaB) return null;
+                    return (
+                      <p className="text-[10px] text-red-400 mb-2">
+                        {problemaA && `${a.nume} nu are tură de lucru pe ${fmtDate(parseD(swAData))} (${turaA.label}). `}
+                        {problemaB && `${b.nume} nu are tură de lucru pe ${fmtDate(parseD(swBData))} (${turaB.label}). `}
+                        Swap-ul nu poate fi creat — ar lăsa o zi fără acoperire reală.
+                      </p>
+                    );
+                  })()}
                   <button onClick={adaugaSwap} disabled={swAId===swBId}
                     className="w-full bg-sky-900/30 hover:bg-sky-900/50 border border-sky-500/30 text-sky-300 font-semibold text-[12px] py-2.5 rounded-lg transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
                     <ArrowLeftRight size={13}/> Înregistrează Swap
