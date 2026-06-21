@@ -201,6 +201,22 @@ function countZileLucratoare(s: string, e: string): number {
   let d=parseD(s); const ed=parseD(e); let c=0;
   while(d<=ed){const wd=d.getDay();if(wd>0&&wd<6&&!isSarbatoare(d))c++;d=new Date(d.getTime()+86400000);} return c;
 }
+// Calculeaza zilele de CO efectiv "noi" dintr-un interval — exclude zilele care se suprapun
+// cu CM/AN existent sau cu alt concediu deja inregistrat al aceluiasi angajat (evita taxarea dubla)
+function countZileLucratoareReale(s: string, e: string, m: Angajat): number {
+  let d = parseD(s); const ed = parseD(e); let c = 0;
+  while (d <= ed) {
+    const wd = d.getDay();
+    if (wd > 0 && wd < 6 && !isSarbatoare(d)) {
+      const dejaCM = inAbsenta(d, m, 'CM');
+      const dejaAN = inAbsenta(d, m, 'AN');
+      const dejaCO = inCO(d, m);
+      if (!dejaCM && !dejaAN && !dejaCO) c++;
+    }
+    d = new Date(d.getTime() + 86400000);
+  }
+  return c;
+}
 
 const SUPLINITOR_OBJ: Angajat = { id: 999, nume: 'Suplinitor', zileCO: 0, concedii: [], absente: [] };
 
@@ -564,15 +580,15 @@ export default function RotaFlow() {
     const key=`${slot.s}__${slot.e}`;
     if(sloturiRef.current.has(key)) return;
     sloturiRef.current.add(key); setSloturiAlocate(new Set(sloturiRef.current));
-    const zl=countZileLucratoare(slot.s,slot.e);
     const angajatTarget = echipa[pi];
     if (!angajatTarget?.uuid) return;
+    const zl=countZileLucratoareReale(slot.s,slot.e,angajatTarget);
 
     setEchipa(prev=>{
       const next=prev.map((m,i)=>i!==pi?m:{...m,concedii:[...m.concedii,slot],zileCO:Math.max(0,m.zileCO-zl)});
       return next;
     });
-    addLog(`CO adăugat: ${angajatTarget.nume} — ${slot.n}`);
+    addLog(`CO adăugat: ${angajatTarget.nume} — ${slot.n}${zl<countZileLucratoare(slot.s,slot.e)?' (zile suprapuse excluse din cost)':''}`);
 
     apiAdaugaConcediu(angajatTarget.uuid, slot.s, slot.e, slot.n, zl).catch(err => {
       console.error('Eroare la salvarea CO in Supabase:', err);
@@ -586,9 +602,13 @@ export default function RotaFlow() {
     if (!c) return;
     const key=`${c.s}__${c.e}`;
     sloturiRef.current.delete(key); setSloturiAlocate(new Set(sloturiRef.current));
-    const zl=countZileLucratoare(c.s,c.e);
 
-    setEchipa(prev=>prev.map((m,i)=>i!==pi?m:{...m,zileCO:Math.min(24,m.zileCO+zl),concedii:m.concedii.filter((_,k)=>k!==ci)}));
+    // Recalculam zilele de restaurat ca si cum acest concediu nu ar mai exista in lista
+    // (evita restaurarea unor zile care erau oricum acoperite de CM/AN/alt CO)
+    const angajatFaraAcestConcediu: Angajat = { ...angajatTarget, concedii: angajatTarget.concedii.filter((_,k)=>k!==ci) };
+    const zl = countZileLucratoareReale(c.s, c.e, angajatFaraAcestConcediu);
+
+    setEchipa(prev=>prev.map((m,i)=>i!==pi?m:{...m,zileCO:m.zileCO+zl,concedii:m.concedii.filter((_,k)=>k!==ci)}));
     addLog(`CO șters: ${angajatTarget.nume} — ${c.n}`);
 
     if (c.uuid) {
@@ -598,6 +618,7 @@ export default function RotaFlow() {
       });
     }
   }, [setEchipa, addLog, echipa, incarcaTotul]);
+
 
   const aplicaUrgenta = () => {
     const angajatTarget = echipa[urgTargetIdx];
@@ -720,22 +741,28 @@ export default function RotaFlow() {
     setEchipa(prev => prev.map(m => {
       const concediiAngajat = simConcedii.filter(sc => sc.angajatId === m.id);
       if (concediiAngajat.length === 0) return m;
-      const noiConcedii: Concediu[] = concediiAngajat.map(sc => {
+
+      // Procesam secvential — fiecare concediu nou tine cont de cele deja adaugate
+      // mai sus in aceeasi simulare, ca sa nu taxam de doua ori zilele suprapuse
+      let angajatProgresiv: Angajat = { ...m };
+      let zileTotale = 0;
+      const noiConcedii: Concediu[] = [];
+
+      concediiAngajat.forEach(sc => {
         const start = parseD(sc.start);
         const end = new Date(start.getTime() + (sc.zile - 1) * 86400000);
-        return { n: `${fmtDate(start)}–${fmtDate(end)}`, s: sc.start, e: fmtDateInput(end) };
-      });
-      const zileTotale = concediiAngajat.reduce((acc, sc) => acc + countZileLucratoare(sc.start, fmtDateInput(new Date(parseD(sc.start).getTime() + (sc.zile-1)*86400000))), 0);
+        const endStr = fmtDateInput(end);
+        const numeSlot = `${fmtDate(start)}–${fmtDate(end)}`;
+        const zl = countZileLucratoareReale(sc.start, endStr, angajatProgresiv);
+        zileTotale += zl;
+        const concediuNou: Concediu = { n: numeSlot, s: sc.start, e: endStr };
+        noiConcedii.push(concediuNou);
+        angajatProgresiv = { ...angajatProgresiv, concedii: [...angajatProgresiv.concedii, concediuNou] };
 
-      if (m.uuid) {
-        concediiAngajat.forEach(sc => {
-          const start = parseD(sc.start);
-          const end = new Date(start.getTime() + (sc.zile - 1) * 86400000);
-          const nume_slot = `${fmtDate(start)}–${fmtDate(end)}`;
-          const zl = countZileLucratoare(sc.start, fmtDateInput(end));
-          operatiiApi.push(apiAdaugaConcediu(m.uuid!, sc.start, fmtDateInput(end), nume_slot, zl));
-        });
-      }
+        if (m.uuid) {
+          operatiiApi.push(apiAdaugaConcediu(m.uuid, sc.start, endStr, numeSlot, zl));
+        }
+      });
 
       return { ...m, concedii: [...m.concedii, ...noiConcedii], zileCO: Math.max(0, m.zileCO - zileTotale) };
     }));
