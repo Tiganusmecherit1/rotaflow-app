@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check } from 'lucide-react';
+import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -156,6 +156,17 @@ function getMonday(d: Date): Date {
   r.setDate(r.getDate() + (day === 0 ? -6 : 1 - day)); r.setHours(0,0,0,0); return r;
 }
 function fmtDate(d: Date) { return d.toLocaleDateString('ro-RO', { day: '2-digit', month: '2-digit' }); }
+// Elimina diacriticele romanesti — necesar pentru export PDF (jsPDF/Helvetica nu le suporta)
+function faraDiacritice(s: string): string {
+  return s
+    .replace(/ă/g,'a').replace(/Ă/g,'A')
+    .replace(/â/g,'a').replace(/Â/g,'A')
+    .replace(/î/g,'i').replace(/Î/g,'I')
+    .replace(/ș/g,'s').replace(/Ș/g,'S')
+    .replace(/ț/g,'t').replace(/Ț/g,'T')
+    .replace(/ş/g,'s').replace(/Ş/g,'S') // variante cu sedila (encoding vechi)
+    .replace(/ţ/g,'t').replace(/Ţ/g,'T');
+}
 function fmtMonth(d: Date) { return d.toLocaleDateString('ro-RO', { month: 'long', year: 'numeric' }); }
 function fmtDateInput(d: Date) { return d.toISOString().split('T')[0]; }
 function fmtTs(d: Date) {
@@ -363,6 +374,11 @@ export default function RotaFlow() {
   const [swNota, setSwNota] = useState('');
   const [lunaOffset, setLunaOffset] = useState(0);
 
+  // ─── Raport Echitate ───
+  const [echitatePerioada, setEchitatePerioada] = useState<'luna'|'trimestru'|'an'|'custom'>('an');
+  const [echitateCustomStart, setEchitateCustomStart] = useState(fmtDateInput(new Date(new Date().getFullYear(),0,1)));
+  const [echitateCustomEnd, setEchitateCustomEnd] = useState(fmtDateInput(new Date()));
+
   // ─── Simulare Concedii ───
   const [showSimulare, setShowSimulare] = useState(false);
   const [simConcedii, setSimConcedii] = useState<SimConcediu[]>([]);
@@ -485,6 +501,63 @@ export default function RotaFlow() {
     }
     return {ore,zile,sarbLucrate,zileCM,zileAN,scor:ore+sarbLucrate*16-zileAN*40};
   }, [getTuraW]);
+
+  // ─── Raport Echitate — calcul pe orice interval [start, end] inclusiv ───
+  const calcEchitate = useCallback((m: Angajat, start: Date, end: Date) => {
+    let ore=0, nopti=0, weekendZile=0, sarbatoriLucrate=0, ziueLucrate=0;
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate()+1)) {
+      const cur = new Date(d);
+      const t = getTuraW(cur, m);
+      if (t.type === 'D' || t.type === 'S') {
+        ore += 8;
+        ziueLucrate++;
+        if (t.type === 'S') nopti++;
+        const wd = cur.getDay();
+        if (wd === 0 || wd === 6) weekendZile++;
+        if (isSarbatoare(cur)) sarbatoriLucrate++;
+      }
+    }
+    return { ore, nopti, weekendZile, sarbatoriLucrate, ziueLucrate };
+  }, [getTuraW]);
+
+  // ─── Prognoza ore suplimentare — verifica saptamanile viitoare pentru depasiri de 48h ───
+  const prognozaOreSuplimentare = useCallback((saptamaniInainte: number = 6) => {
+    const azi = getMonday(new Date());
+    const rezultate: { angajat: string; saptamanaStart: Date; ore: number }[] = [];
+    for (let s = 0; s < saptamaniInainte; s++) {
+      const wkStart = new Date(azi.getTime() + s * 7 * 86400000);
+      echipa.forEach(m => {
+        const ore = calcOreSaptamana(m, wkStart, echipa, suplinitorFinal, swapuri);
+        if (ore > 48) {
+          rezultate.push({ angajat: m.nume, saptamanaStart: wkStart, ore });
+        }
+      });
+    }
+    return rezultate;
+  }, [echipa, suplinitorFinal, swapuri]);
+
+  // Interval real de date pe baza selectiei de perioada pentru Raport Echitate
+  const echitateInterval = useMemo(() => {
+    const azi = new Date();
+    if (echitatePerioada === 'luna') {
+      return { start: new Date(azi.getFullYear(), azi.getMonth(), 1), end: new Date(azi.getFullYear(), azi.getMonth()+1, 0) };
+    }
+    if (echitatePerioada === 'trimestru') {
+      return { start: new Date(azi.getFullYear(), azi.getMonth()-2, 1), end: new Date(azi.getFullYear(), azi.getMonth()+1, 0) };
+    }
+    if (echitatePerioada === 'an') {
+      return { start: new Date(azi.getFullYear(), 0, 1), end: azi };
+    }
+    return { start: parseD(echitateCustomStart), end: parseD(echitateCustomEnd) };
+  }, [echitatePerioada, echitateCustomStart, echitateCustomEnd]);
+
+  // Statistici de echitate per angajat, pentru intervalul selectat
+  const echitateDate = useMemo(() => {
+    return echipa.map(m => ({ angajat: m, ...calcEchitate(m, echitateInterval.start, echitateInterval.end) }));
+  }, [echipa, echitateInterval, calcEchitate]);
+
+  // Prognoza orelor suplimentare pentru urmatoarele 6 saptamani
+  const prognozaSuplimentare = useMemo(() => prognozaOreSuplimentare(6), [prognozaOreSuplimentare]);
 
   // ─── Handlers ───
   const adaugaConcediu = useCallback((pi: number, slot: {n:string;s:string;e:string}) => {
@@ -702,15 +775,15 @@ export default function RotaFlow() {
     const nrZile = new Date(yr, mo+1, 0).getDate();
 
     doc.setFontSize(16); doc.setTextColor(0, 120, 212);
-    doc.text(`RotaFlow — Pontaj ${luna}`, 14, 14);
+    doc.text(faraDiacritice(`RotaFlow — Pontaj ${luna}`), 14, 14);
     doc.setFontSize(9); doc.setTextColor(100,100,100);
-    doc.text(`Generat: ${fmtTs(new Date())}`, 14, 20);
+    doc.text(faraDiacritice(`Generat: ${fmtTs(new Date())}`), 14, 20);
 
     // Tabel ture zilnice
     const zileCols = Array.from({length:nrZile},(_,i)=>(i+1).toString());
     const head = [['Angajat', ...zileCols]];
     const body = echipa.map(m => {
-      const row: string[] = [m.nume];
+      const row: string[] = [faraDiacritice(m.nume)];
       for(let i=0;i<nrZile;i++){
         const d=new Date(yr,mo,i+1);
         const t=getTuraW(d,m);
@@ -738,18 +811,53 @@ export default function RotaFlow() {
     // Tabel statistici
     const statsY = (doc as any).lastAutoTable.finalY + 8;
     doc.setFontSize(11); doc.setTextColor(0,120,212);
-    doc.text('Statistici lunare', 14, statsY);
+    doc.text(faraDiacritice('Statistici lunare'), 14, statsY);
     autoTable(doc, {
-      head:[['Angajat','Zile lucrate','Ore lucrate','Sărbători lucrate','CO rămas','CM','Abs. Nemot.','Scor performanță']],
+      head:[['Angajat','Zile lucrate','Ore lucrate','Sarbatori lucrate','CO ramas','CM','Abs. Nemot.','Scor performanta']],
       body: echipa.map(m=>{
         const s=calcScor(m,lunaStart);
-        return[m.nume,s.zile.toString(),`${s.ore}h`,s.sarbLucrate.toString(),m.zileCO.toString(),s.zileCM.toString(),s.zileAN.toString(),`${s.scor}p`];
+        return[faraDiacritice(m.nume),s.zile.toString(),`${s.ore}h`,s.sarbLucrate.toString(),m.zileCO.toString(),s.zileCM.toString(),s.zileAN.toString(),`${s.scor}p`];
       }),
       startY: statsY+4, styles:{fontSize:9}, headStyles:{fillColor:[0,120,212]},
     });
 
     doc.save(`RotaFlow_Pontaj_${luna.replace(' ','_')}.pdf`);
     addLog(`PDF exportat: ${luna}`);
+  };
+
+  const generateEchitatePDF = () => {
+    const doc = new jsPDF({ orientation: 'landscape' });
+    const perioadaLabel = echitatePerioada==='luna' ? 'Luna' : echitatePerioada==='trimestru' ? 'Trimestru' : echitatePerioada==='an' ? 'An' : 'Custom';
+    const intervalLabel = `${fmtDate(echitateInterval.start)} - ${fmtDate(echitateInterval.end)}`;
+
+    doc.setFontSize(16); doc.setTextColor(16,150,100);
+    doc.text(faraDiacritice('RotaFlow — Raport de Echitate'), 14, 14);
+    doc.setFontSize(9); doc.setTextColor(100,100,100);
+    doc.text(faraDiacritice(`Perioada: ${perioadaLabel} · ${intervalLabel}  ·  Generat: ${fmtTs(new Date())}`), 14, 20);
+
+    autoTable(doc, {
+      head: [['Angajat','Ore totale','Nopti (S)','Zile weekend','Sarbatori lucrate','CO ramas']],
+      body: echitateDate.map(({angajat,ore,nopti,weekendZile,sarbatoriLucrate})=>[
+        faraDiacritice(angajat.nume), `${ore}h`, nopti.toString(), weekendZile.toString(), sarbatoriLucrate.toString(), angajat.zileCO.toString()
+      ]),
+      startY: 26, styles:{fontSize:9, cellPadding:3}, headStyles:{fillColor:[16,150,100]},
+      columnStyles: { 0: { fontStyle: 'bold' } },
+    });
+
+    const prognozaY = (doc as any).lastAutoTable.finalY + 10;
+    const prognoza = prognozaOreSuplimentare(6);
+    if (prognoza.length > 0) {
+      doc.setFontSize(11); doc.setTextColor(200,30,30);
+      doc.text(faraDiacritice('Prognoză depășiri 48h/săptămână — următoarele 6 săptămâni'), 14, prognozaY);
+      autoTable(doc, {
+        head: [['Angajat','Saptamana','Ore prognozate']],
+        body: prognoza.map(r=>[faraDiacritice(r.angajat), fmtDate(r.saptamanaStart), `${r.ore}h`]),
+        startY: prognozaY+4, styles:{fontSize:9}, headStyles:{fillColor:[185,28,28]},
+      });
+    }
+
+    doc.save(`RotaFlow_Raport_Echitate_${perioadaLabel}.pdf`);
+    addLog(`Raport Echitate exportat: ${perioadaLabel} (${intervalLabel})`);
   };
 
   const displayEchipa = useMemo(()=>suplinitorFinal?[...echipa,SUPLINITOR_OBJ]:echipa,[echipa,suplinitorFinal]);
@@ -1111,6 +1219,116 @@ export default function RotaFlow() {
                   })}
                 </div>
               </div>
+              <div className="bg-[#2c2c2e] border border-white/[0.07] rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-white/[0.07] flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Scale size={13} className="text-emerald-400"/>
+                    <span className="font-semibold text-[12px] text-zinc-300">Raport de Echitate</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {([['luna','Lună'],['trimestru','Trimestru'],['an','An'],['custom','Custom']] as const).map(([k,l])=>(
+                      <button key={k} onClick={()=>setEchitatePerioada(k)}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold transition-all ${echitatePerioada===k?'bg-[#0078d4] text-white':'bg-black/20 text-zinc-400 hover:bg-black/30'}`}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {echitatePerioada==='custom' && (
+                  <div className="px-4 pt-3 flex items-center gap-2">
+                    <input type="date" value={echitateCustomStart} onChange={e=>setEchitateCustomStart(e.target.value)} className={inputCls} />
+                    <span className="text-zinc-600 text-[11px]">până la</span>
+                    <input type="date" value={echitateCustomEnd} onChange={e=>setEchitateCustomEnd(e.target.value)} className={inputCls} />
+                  </div>
+                )}
+
+                <div className="p-4">
+                  <p className="text-[10px] text-zinc-600 mb-3">
+                    {fmtDate(echitateInterval.start)} – {fmtDate(echitateInterval.end)} · ore, nopți (S), zile de weekend și sărbători lucrate, per angajat
+                  </p>
+
+                  {/* Grafic comparativ — bare orizontale suprapuse pentru ore totale */}
+                  <div className="space-y-2.5 mb-4">
+                    {echitateDate.map(({angajat,ore,nopti,weekendZile,sarbatoriLucrate})=>{
+                      const maxOre = Math.max(...echitateDate.map(e=>e.ore), 1);
+                      const idx = echipa.findIndex(e=>e.id===angajat.id);
+                      const pct = Math.round((ore/maxOre)*100);
+                      return (
+                        <div key={angajat.id} className="flex items-center gap-3">
+                          <div className="w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0"
+                            style={{background:AVATAR_COLORS[idx%5]+'22',color:AVATAR_COLORS[idx%5]}}>
+                            {angajat.nume.substring(0,2).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="font-semibold text-[12px]">{angajat.nume}</span>
+                              <span className="text-[11px] text-[#60cdff] font-bold">{ore}h</span>
+                            </div>
+                            <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                              <div className="h-full rounded-full bg-gradient-to-r from-[#0078d4] to-[#60cdff] transition-all duration-700" style={{width:`${pct}%`}}/>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Tabel detaliat */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="text-zinc-500 border-b border-white/[0.07]">
+                          <th className="text-left py-2 font-medium">Angajat</th>
+                          <th className="text-center py-2 font-medium">Ore</th>
+                          <th className="text-center py-2 font-medium">Nopți (S)</th>
+                          <th className="text-center py-2 font-medium">Weekend</th>
+                          <th className="text-center py-2 font-medium">Sărbători</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {echitateDate.map(({angajat,ore,nopti,weekendZile,sarbatoriLucrate})=>(
+                          <tr key={angajat.id} className="border-b border-white/[0.04]">
+                            <td className="py-2 font-medium">{angajat.nume}</td>
+                            <td className="text-center py-2 text-[#60cdff] font-bold">{ore}h</td>
+                            <td className="text-center py-2">{nopti}</td>
+                            <td className="text-center py-2">{weekendZile}</td>
+                            <td className="text-center py-2">{sarbatoriLucrate>0?<span className="text-amber-400 font-bold">{sarbatoriLucrate}</span>:0}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <button onClick={generateEchitatePDF}
+                    className="mt-4 w-full flex items-center justify-center gap-2 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-[12px] font-semibold py-2.5 rounded-xl transition-all">
+                    <FileText size={13}/> Exportă raport PDF
+                  </button>
+                </div>
+              </div>
+
+              {/* ── Prognoza Ore Suplimentare ── */}
+              {prognozaSuplimentare.length > 0 && (
+                <div className="bg-[#2c2c2e] border border-red-500/30 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-white/[0.07] flex items-center gap-2">
+                    <AlertTriangle size={13} className="text-red-400"/>
+                    <span className="font-semibold text-[12px] text-zinc-300">Prognoză depășiri ore — următoarele 6 săptămâni</span>
+                  </div>
+                  <div className="p-4 space-y-2">
+                    <p className="text-[10px] text-zinc-600 mb-2">Art. 114 Codul Muncii — verifică din timp dacă rotația curentă duce la depășiri viitoare de 48h/săptămână</p>
+                    {prognozaSuplimentare.map((r,i)=>(
+                      <div key={i} className="flex items-center justify-between bg-red-950/20 border border-red-500/20 rounded-lg px-3.5 py-2.5">
+                        <div className="flex items-center gap-2.5">
+                          <span className="font-semibold text-[12px] text-zinc-200">{r.angajat}</span>
+                          <span className="text-[10px] text-zinc-500">săptămâna {fmtDate(r.saptamanaStart)}</span>
+                        </div>
+                        <span className="text-[12px] font-bold text-red-400">{r.ore}h</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="bg-[#2c2c2e] border border-white/[0.07] rounded-xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-white/[0.07] flex items-center gap-2">
                   <Trophy size={13} className="text-amber-400"/>
