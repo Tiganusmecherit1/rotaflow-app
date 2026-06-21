@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer } from 'lucide-react';
+import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -36,11 +36,19 @@ const AVATAR_COLORS = ['#0078d4','#bf5af2','#4cd964','#ffd60a','#ff6b6b'];
 const DAY_SHORT = ['Lu','Ma','Mi','Jo','Vi','Sâ','Du'];
 const LS_KEY = 'rotaflow_v1';
 
-interface Concediu { n: string; s: string; e: string }
-interface Absenta { startDate: string; zile: number; tip: 'CM' | 'AN' }
+interface Concediu { n: string; s: string; e: string; uuid?: string }
+interface Absenta { startDate: string; zile: number; tip: 'CM' | 'AN'; uuid?: string }
 interface Swap { id: string; aId: number; aData: string; bId: number; bData: string; nota: string }
-interface Angajat { id: number; nume: string; zileCO: number; concedii: Concediu[]; absente: Absenta[] }
+interface Angajat { id: number; uuid?: string; nume: string; zileCO: number; concedii: Concediu[]; absente: Absenta[] }
 interface LogEntry { ts: string; msg: string }
+interface SimConcediu { id: string; angajatId: number; start: string; zile: number }
+
+// ─── Tipuri brute din Supabase ───
+interface SbAngajat { id: string; nume: string; pozitie_rotatie: number; zile_co: number; este_sef: boolean; activ: boolean }
+interface SbConcediu { id: string; angajat_id: string; data_start: string; data_sfarsit: string; nume_slot: string | null; zile_lucratoare: number }
+interface SbAbsenta { id: string; angajat_id: string; tip: 'CM' | 'AN'; data_start: string; zile: number }
+interface SbSwap { id: string; solicitant_id: string; solicitant_data: string; partener_id: string; partener_data: string; nota: string | null; status: string; created_at: string }
+interface SbLog { id: string; mesaj: string; created_at: string }
 
 const ECHIPA_DEFAULT: Angajat[] = [
   { id: 0, nume: 'Andrei',     zileCO: 24, concedii: [], absente: [] },
@@ -50,16 +58,96 @@ const ECHIPA_DEFAULT: Angajat[] = [
   { id: 4, nume: 'Ciprian',    zileCO: 24, concedii: [], absente: [] },
 ];
 
-// ─── localStorage helpers ───
-function loadState() {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch { return null; }
+// ─── Adaptor Supabase -> formatul intern Angajat[] ───
+function adapteazaDateDinSupabase(
+  sbAngajati: SbAngajat[],
+  sbConcedii: SbConcediu[],
+  sbAbsente: SbAbsenta[]
+): Angajat[] {
+  return sbAngajati
+    .filter(a => !a.este_sef) // sefu nu intra in rotatia normala
+    .sort((a, b) => a.pozitie_rotatie - b.pozitie_rotatie)
+    .map(a => ({
+      id: a.pozitie_rotatie,
+      uuid: a.id,
+      nume: a.nume,
+      zileCO: a.zile_co,
+      concedii: sbConcedii
+        .filter(c => c.angajat_id === a.id)
+        .map(c => ({
+          n: `${fmtDate(parseDataSb(c.data_start))}–${fmtDate(parseDataSb(c.data_sfarsit))}`,
+          s: c.data_start,
+          e: c.data_sfarsit,
+          uuid: c.id,
+        })),
+      absente: sbAbsente
+        .filter(ab => ab.angajat_id === a.id)
+        .map(ab => ({ startDate: ab.data_start, zile: ab.zile, tip: ab.tip, uuid: ab.id })),
+    }));
 }
-function saveState(data: object) {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch {}
+function parseDataSb(s: string) { return new Date(s + 'T00:00:00'); }
+
+// ─── API helpers — inlocuiesc localStorage ───
+async function fetchToateDatele() {
+  const res = await fetch('/api/data');
+  if (!res.ok) throw new Error('Eroare la incarcarea datelor');
+  return res.json() as Promise<{
+    angajati: SbAngajat[]; concedii: SbConcediu[]; absente: SbAbsenta[];
+    swapuri: SbSwap[]; istoric: SbLog[]; setari: { suplinitor_activ: boolean };
+  }>;
+}
+async function apiAdaugaConcediu(angajat_id: string, data_start: string, data_sfarsit: string, nume_slot: string | null, zile_lucratoare: number) {
+  const res = await fetch('/api/concedii', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ angajat_id, data_start, data_sfarsit, nume_slot, zile_lucratoare }),
+  });
+  if (!res.ok) throw new Error('Eroare la adaugarea concediului');
+  return res.json();
+}
+async function apiStergeConcediu(id: string) {
+  const res = await fetch(`/api/concedii?id=${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Eroare la stergerea concediului');
+  return res.json();
+}
+async function apiAdaugaAbsenta(angajat_id: string, tip: 'CM'|'AN', data_start: string, zile: number) {
+  const res = await fetch('/api/absente', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ angajat_id, tip, data_start, zile }),
+  });
+  if (!res.ok) throw new Error('Eroare la adaugarea absentei');
+  return res.json();
+}
+async function apiSetSuplinitor(activ: boolean) {
+  const res = await fetch('/api/suplinitor', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ activ }),
+  });
+  if (!res.ok) throw new Error('Eroare la actualizarea suplinitorului');
+  return res.json();
+}
+async function apiCreeazaSwap(solicitant_id: string, solicitant_data: string, partener_id: string, partener_data: string, nota: string) {
+  const res = await fetch('/api/swap', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ solicitant_id, solicitant_data, partener_id, partener_data, nota, status: 'aprobat' }),
+  });
+  if (!res.ok) throw new Error('Eroare la crearea swap-ului');
+  return res.json();
+}
+async function apiAdaugaIstoric(mesaj: string) {
+  const res = await fetch('/api/istoric', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mesaj }),
+  });
+  if (!res.ok) console.error('Eroare la adaugarea in istoric');
+  return res.json().catch(() => null);
+}
+async function apiActualizeazaAngajat(id: string, payload: { nume?: string; zile_co?: number }) {
+  const res = await fetch('/api/angajati', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, ...payload }),
+  });
+  if (!res.ok) throw new Error('Eroare la actualizarea angajatului');
+  return res.json();
 }
 
 // ─── Helpers ───
@@ -76,7 +164,20 @@ function fmtTs(d: Date) {
 }
 
 function inCO(d: Date, m: Angajat): boolean {
-  return m.concedii.some(c => { const s=parseD(c.s),e=parseD(c.e); e.setHours(23,59,59); return d>=s&&d<=e; });
+  // Verificare directa - data e in interiorul unui concediu existent
+  if (m.concedii.some(c => { const s=parseD(c.s),e=parseD(c.e); e.setHours(23,59,59); return d>=s&&d<=e; })) return true;
+
+  // Verificare "punte" - daca data e exact 1 zi intre sfarsitul unui concediu si inceputul altuia
+  // (sloturi adiacente, ex: 06-11 Apr + 13-18 Apr -> 12 Apr e tratat ca CO, fara cost suplimentar)
+  return m.concedii.some(c1 => m.concedii.some(c2 => {
+    if (c1 === c2) return false;
+    const e1 = parseD(c1.e);
+    const s2 = parseD(c2.s);
+    const gapStart = new Date(e1.getTime() + 86400000);
+    const gapEnd = new Date(s2.getTime() - 86400000);
+    if (gapStart.getTime() !== gapEnd.getTime()) return false; // gap trebuie sa fie exact 1 zi
+    return d.toDateString() === gapStart.toDateString();
+  }));
 }
 function inAbsenta(d: Date, m: Angajat, tip: 'CM'|'AN'|'any'): boolean {
   return m.absente.some(a => {
@@ -136,6 +237,72 @@ function calcOreSaptamana(m: Angajat, weekStart: Date, echipa: Angajat[], suplin
   return ore;
 }
 
+// ─── Simulare: concedii custom (durata libera, suprapuneri posibile) ───
+function inSimConcediu(d: Date, angajatId: number, simConcedii: SimConcediu[]): boolean {
+  return simConcedii.some(sc => {
+    if (sc.angajatId !== angajatId) return false;
+    const s = parseD(sc.start);
+    const e = new Date(s.getTime() + (sc.zile - 1) * 86400000); e.setHours(23, 59, 59);
+    return d >= s && d <= e;
+  });
+}
+
+// Tura pentru simulare — foloseste simConcedii in loc de m.concedii, ignora CM/AN reale
+function getTuraSim(d: Date, m: Angajat, toataEchipa: Angajat[], simConcedii: SimConcediu[], suplinitorActiv: boolean): { type: string; label: string } {
+  const isSup = m.id === 999;
+  if (!isSup && inSimConcediu(d, m.id, simConcedii)) return { type: 'CO', label: 'CO' };
+  const activi = toataEchipa.filter(a => !inSimConcediu(d, a.id, simConcedii));
+  if (suplinitorActiv) activi.push(SUPLINITOR_OBJ);
+  const poz = activi.findIndex(a => a.id === m.id);
+  if (poz === -1) return { type: 'L', label: 'L' };
+  const ref = new Date(2026, 0, 1);
+  const dayIdx = Math.floor((d.getTime() - ref.getTime()) / 86400000);
+  const n = activi.length;
+  const sec = ((dayIdx + poz) % n + n) % n;
+  if (sec === 0 || sec === 1) return { type: 'D', label: 'D' };
+  if (sec === 2) return { type: 'S', label: 'S' };
+  return { type: 'L', label: 'L' };
+}
+
+// Analiza de conformitate pentru un interval — verifica nr minim activi si ore maxime saptamanale
+interface ConformitateIssue { tip: 'PUTINI_OAMENI' | 'ORE_MAXIME'; data: string; detalii: string }
+function analizeazaConformitate(echipa: Angajat[], simConcedii: SimConcediu[], suplinitorActiv: boolean, startCheck: Date, zileCheck: number, pragMinimActivi = 3, pragOreMax = 48): ConformitateIssue[] {
+  const issues: ConformitateIssue[] = [];
+  const zileSet = new Set<string>();
+
+  for (let i = 0; i < zileCheck; i++) {
+    const d = new Date(startCheck.getTime() + i * 86400000);
+    const activi = echipa.filter(a => !inSimConcediu(d, a.id, simConcedii));
+    const totalActivi = activi.length + (suplinitorActiv ? 1 : 0);
+    if (totalActivi < pragMinimActivi) {
+      const key = fmtDateInput(d);
+      if (!zileSet.has('PUTINI_'+key)) {
+        zileSet.add('PUTINI_'+key);
+        issues.push({ tip: 'PUTINI_OAMENI', data: key, detalii: `${fmtDate(d)}: doar ${totalActivi} angajați activi (minim recomandat: ${pragMinimActivi})` });
+      }
+    }
+  }
+
+  // Verifica ore saptamanale pentru fiecare angajat, pe ferestre de 7 zile in intervalul verificat
+  echipa.forEach(m => {
+    for (let i = 0; i < zileCheck; i += 7) {
+      const wkStart = new Date(startCheck.getTime() + i * 86400000);
+      let ore = 0;
+      for (let j = 0; j < 7; j++) {
+        const d = new Date(wkStart.getTime() + j * 86400000);
+        const t = getTuraSim(d, m, echipa, simConcedii, suplinitorActiv);
+        if (t.type === 'D' || t.type === 'S') ore += 8;
+      }
+      if (ore > pragOreMax) {
+        issues.push({ tip: 'ORE_MAXIME', data: fmtDateInput(wkStart), detalii: `${m.nume}: ${ore}h în săptămâna din ${fmtDate(wkStart)} (limită legală: ${pragOreMax}h)` });
+      }
+    }
+  });
+
+  return issues;
+}
+
+
 const SHIFT_STYLE: Record<string, string> = {
   D:  'bg-sky-950/50 text-sky-300 border border-sky-500/30',
   S:  'bg-purple-950/50 text-purple-300 border border-purple-500/30',
@@ -168,20 +335,16 @@ const PRINT_STYLES = `
 `;
 
 export default function RotaFlow() {
-  // ─── State cu initializare din localStorage ───
-  const saved = useMemo(() => loadState(), []);
+  // ─── State — initial gol, populat din Supabase la montare ───
+  const [echipa, setEchipaRaw] = useState<Angajat[]>([]);
+  const [swapuri, setSwapuriRaw] = useState<Swap[]>([]);
+  const [log, setLogRaw] = useState<LogEntry[]>([]);
+  const [suplinitorActiv, setSuplinitorActivRaw] = useState<boolean>(false);
+  const [seIncarca, setSeIncarca] = useState(true);
+  const [eroareIncarcare, setEroareIncarcare] = useState<string | null>(null);
 
-  const [echipa, setEchipaRaw] = useState<Angajat[]>(saved?.echipa ?? ECHIPA_DEFAULT);
-  const [swapuri, setSwapuriRaw] = useState<Swap[]>(saved?.swapuri ?? []);
-  const [log, setLogRaw] = useState<LogEntry[]>(saved?.log ?? []);
-  const [suplinitorActiv, setSuplinitorActivRaw] = useState<boolean>(saved?.suplinitorActiv ?? false);
-
-  const sloturiRef = useRef<Set<string>>(new Set(
-    (saved?.echipa ?? ECHIPA_DEFAULT).flatMap((m: Angajat) => m.concedii.map((c: Concediu) => `${c.s}__${c.e}`))
-  ));
-  const [sloturiAlocate, setSloturiAlocate] = useState<Set<string>>(new Set(
-    (saved?.echipa ?? ECHIPA_DEFAULT).flatMap((m: Angajat) => m.concedii.map((c: Concediu) => `${c.s}__${c.e}`))
-  ));
+  const sloturiRef = useRef<Set<string>>(new Set());
+  const [sloturiAlocate, setSloturiAlocate] = useState<Set<string>>(new Set());
 
   const [weekOffset, setWeekOffset] = useState(0);
   const [activeTab, setActiveTab] = useState<'rota'|'luna'|'stats'|'swap'|'log'>('rota');
@@ -200,43 +363,85 @@ export default function RotaFlow() {
   const [swNota, setSwNota] = useState('');
   const [lunaOffset, setLunaOffset] = useState(0);
 
-  // ─── Wrappers cu auto-save + log ───
-  const addLog = useCallback((msg: string) => {
-    const entry: LogEntry = { ts: fmtTs(new Date()), msg };
-    setLogRaw(prev => {
-      const next = [entry, ...prev].slice(0, 100);
-      return next;
-    });
+  // ─── Simulare Concedii ───
+  const [showSimulare, setShowSimulare] = useState(false);
+  const [simConcedii, setSimConcedii] = useState<SimConcediu[]>([]);
+  const [simSuplinitor, setSimSuplinitor] = useState(false);
+  const [simTargetIdx, setSimTargetIdx] = useState(0);
+  const [simStart, setSimStart] = useState(fmtDateInput(new Date()));
+  const [simZile, setSimZile] = useState(6);
+  const [simWeekOffset, setSimWeekOffset] = useState(0);
+  const [simIssues, setSimIssues] = useState<ConformitateIssue[]>([]);
+  const [simPendingAction, setSimPendingAction] = useState<'add'|null>(null);
+  const [simPendingPayload, setSimPendingPayload] = useState<SimConcediu|null>(null);
+
+  // ─── Incarcare initiala din Supabase ───
+  const incarcaTotul = useCallback(async () => {
+    try {
+      setEroareIncarcare(null);
+      const { angajati: sbAngajati, concedii: sbConcedii, absente: sbAbsente, swapuri: sbSwapuri, istoric: sbIstoric, setari } = await fetchToateDatele();
+
+      const echipaAdaptata = adapteazaDateDinSupabase(sbAngajati, sbConcedii, sbAbsente);
+      setEchipaRaw(echipaAdaptata);
+
+      const uuidToId = new Map(sbAngajati.filter(a => !a.este_sef).map(a => [a.id, a.pozitie_rotatie]));
+      const swapuriAdaptate: Swap[] = sbSwapuri
+        .filter(s => s.status === 'aprobat')
+        .map(s => ({
+          id: s.id,
+          aId: uuidToId.get(s.solicitant_id) ?? 0,
+          aData: s.solicitant_data,
+          bId: uuidToId.get(s.partener_id) ?? 0,
+          bData: s.partener_data,
+          nota: s.nota ?? '',
+        }));
+      setSwapuriRaw(swapuriAdaptate);
+
+      const logAdaptat: LogEntry[] = sbIstoric.map(l => ({
+        ts: new Date(l.created_at).toLocaleDateString('ro-RO', { day:'2-digit', month:'2-digit', year:'numeric' }) + ' ' + new Date(l.created_at).toLocaleTimeString('ro-RO', { hour:'2-digit', minute:'2-digit' }),
+        msg: l.mesaj,
+      }));
+      setLogRaw(logAdaptat);
+
+      setSuplinitorActivRaw(setari?.suplinitor_activ ?? false);
+
+      const sloturiSet = new Set(echipaAdaptata.flatMap(m => m.concedii.map(c => `${c.s}__${c.e}`)));
+      sloturiRef.current = sloturiSet;
+      setSloturiAlocate(new Set(sloturiSet));
+    } catch (err) {
+      console.error('Eroare la incarcarea datelor din Supabase:', err);
+      setEroareIncarcare('Nu am putut incarca datele. Verifica conexiunea si reincarca pagina.');
+    } finally {
+      setSeIncarca(false);
+    }
   }, []);
 
+  useEffect(() => { incarcaTotul(); }, [incarcaTotul]);
+
+  // ─── Wrappers — scriu direct in Supabase, apoi reincarca starea ───
+  const addLog = useCallback((msg: string) => {
+    const entry: LogEntry = { ts: fmtTs(new Date()), msg };
+    setLogRaw(prev => [entry, ...prev].slice(0, 100));
+    apiAdaugaIstoric(msg).catch(() => {});
+  }, []);
+
+  // setEchipa ramane pentru compatibilitate cu codul existent (actualizeaza UI optimist),
+  // dar persistarea reala se face punctual in fiecare handler (vezi mai jos)
   const setEchipa = useCallback((fn: (prev: Angajat[]) => Angajat[]) => {
-    setEchipaRaw(prev => {
-      const next = fn(prev);
-      saveState({ echipa: next, swapuri, log, suplinitorActiv });
-      return next;
-    });
-  }, [swapuri, log, suplinitorActiv]);
+    setEchipaRaw(prev => fn(prev));
+  }, []);
 
   const setSwapuri = useCallback((fn: (prev: Swap[]) => Swap[]) => {
-    setSwapuriRaw(prev => {
-      const next = fn(prev);
-      saveState({ echipa, swapuri: next, log, suplinitorActiv });
-      return next;
-    });
-  }, [echipa, log, suplinitorActiv]);
+    setSwapuriRaw(prev => fn(prev));
+  }, []);
 
   const setSuplinitorActiv = useCallback((val: boolean | ((p: boolean) => boolean)) => {
     setSuplinitorActivRaw(prev => {
       const next = typeof val === 'function' ? val(prev) : val;
-      saveState({ echipa, swapuri, log, suplinitorActiv: next });
+      apiSetSuplinitor(next).catch(() => {});
       return next;
     });
-  }, [echipa, swapuri, log]);
-
-  // Salveaza log separat cand se schimba
-  useEffect(() => {
-    saveState({ echipa, swapuri, log, suplinitorActiv });
-  }, [log]);
+  }, []);
 
   // ─── Calcule ───
   const weekStart = useMemo(() => {
@@ -250,6 +455,12 @@ export default function RotaFlow() {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth() + lunaOffset, 1);
   }, [lunaOffset]);
+
+  const simWeekStart = useMemo(() => {
+    const base = getMonday(new Date()); const r = new Date(base);
+    r.setDate(r.getDate()+simWeekOffset*7); return r;
+  }, [simWeekOffset]);
+  const simDays = useMemo(() => Array.from({length:7},(_,i)=>new Date(simWeekStart.getTime()+i*86400000)), [simWeekStart]);
 
   const suplinitorAutoActiv = useMemo(() => echipa.some(m => m.absente.some(a => a.tip==='CM'&&a.zile>7)), [echipa]);
   const suplinitorFinal = suplinitorActiv || suplinitorAutoActiv;
@@ -281,37 +492,68 @@ export default function RotaFlow() {
     if(sloturiRef.current.has(key)) return;
     sloturiRef.current.add(key); setSloturiAlocate(new Set(sloturiRef.current));
     const zl=countZileLucratoare(slot.s,slot.e);
+    const angajatTarget = echipa[pi];
+    if (!angajatTarget?.uuid) return;
+
     setEchipa(prev=>{
       const next=prev.map((m,i)=>i!==pi?m:{...m,concedii:[...m.concedii,slot],zileCO:Math.max(0,m.zileCO-zl)});
-      addLog(`CO adăugat: ${prev[pi].nume} — ${slot.n}`);
       return next;
     });
-  }, [setEchipa, addLog]);
+    addLog(`CO adăugat: ${angajatTarget.nume} — ${slot.n}`);
+
+    apiAdaugaConcediu(angajatTarget.uuid, slot.s, slot.e, slot.n, zl).catch(err => {
+      console.error('Eroare la salvarea CO in Supabase:', err);
+      incarcaTotul(); // re-sincronizam daca a esuat scrierea
+    });
+  }, [setEchipa, addLog, echipa, incarcaTotul]);
 
   const stergeConcediu = useCallback((pi: number, ci: number) => {
-    setEchipa(prev=>{
-      const c=prev[pi].concedii[ci]; const key=`${c.s}__${c.e}`;
-      sloturiRef.current.delete(key); setSloturiAlocate(new Set(sloturiRef.current));
-      const zl=countZileLucratoare(c.s,c.e);
-      addLog(`CO șters: ${prev[pi].nume} — ${c.n}`);
-      return prev.map((m,i)=>i!==pi?m:{...m,zileCO:Math.min(24,m.zileCO+zl),concedii:m.concedii.filter((_,k)=>k!==ci)});
-    });
-  }, [setEchipa, addLog]);
+    const angajatTarget = echipa[pi];
+    const c = angajatTarget?.concedii[ci];
+    if (!c) return;
+    const key=`${c.s}__${c.e}`;
+    sloturiRef.current.delete(key); setSloturiAlocate(new Set(sloturiRef.current));
+    const zl=countZileLucratoare(c.s,c.e);
+
+    setEchipa(prev=>prev.map((m,i)=>i!==pi?m:{...m,zileCO:Math.min(24,m.zileCO+zl),concedii:m.concedii.filter((_,k)=>k!==ci)}));
+    addLog(`CO șters: ${angajatTarget.nume} — ${c.n}`);
+
+    if (c.uuid) {
+      apiStergeConcediu(c.uuid).catch(err => {
+        console.error('Eroare la stergerea CO din Supabase:', err);
+        incarcaTotul();
+      });
+    }
+  }, [setEchipa, addLog, echipa, incarcaTotul]);
 
   const aplicaUrgenta = () => {
-    setEchipa(prev=>{
-      addLog(`${urgTip} adăugat: ${prev[urgTargetIdx].nume} — ${urgStart} · ${urgZile}z`);
-      return prev.map((m,i)=>i!==urgTargetIdx?m:{...m,absente:[...m.absente,{startDate:urgStart,zile:urgZile,tip:urgTip}]});
-    });
+    const angajatTarget = echipa[urgTargetIdx];
+    if (!angajatTarget?.uuid) return;
+
+    setEchipa(prev=>prev.map((m,i)=>i!==urgTargetIdx?m:{...m,absente:[...m.absente,{startDate:urgStart,zile:urgZile,tip:urgTip}]}));
+    addLog(`${urgTip} adăugat: ${angajatTarget.nume} — ${urgStart} · ${urgZile}z`);
     setShowUrgente(false);
+
+    apiAdaugaAbsenta(angajatTarget.uuid, urgTip, urgStart, urgZile).catch(err => {
+      console.error('Eroare la salvarea absentei in Supabase:', err);
+      incarcaTotul();
+    });
   };
 
   const stergeAbsenta = (pi: number, ai: number) => {
-    setEchipa(prev=>{
-      const a=prev[pi].absente[ai];
-      addLog(`${a.tip} șters: ${prev[pi].nume}`);
-      return prev.map((m,i)=>i!==pi?m:{...m,absente:m.absente.filter((_,k)=>k!==ai)});
-    });
+    const angajatTarget = echipa[pi];
+    const a = angajatTarget?.absente[ai];
+    if (!a) return;
+
+    setEchipa(prev=>prev.map((m,i)=>i!==pi?m:{...m,absente:m.absente.filter((_,k)=>k!==ai)}));
+    addLog(`${a.tip} șters: ${angajatTarget.nume}`);
+
+    if (a.uuid) {
+      fetch(`/api/absente?id=${a.uuid}`, { method: 'DELETE' }).catch(err => {
+        console.error('Eroare la stergerea absentei din Supabase:', err);
+        incarcaTotul();
+      });
+    }
   };
 
   const adaugaSwap = () => {
@@ -321,6 +563,17 @@ export default function RotaFlow() {
     const a=echipa.find(m=>m.id===swAId), b=echipa.find(m=>m.id===swBId);
     addLog(`Swap: ${a?.nume} (${swAData}) ↔ ${b?.nume} (${swBData})${swNota?' — '+swNota:''}`);
     setSwNota('');
+
+    if (a?.uuid && b?.uuid) {
+      apiCreeazaSwap(a.uuid, swAData, b.uuid, swBData, swNota).then(res => {
+        if (res.swap?.id) {
+          setSwapuri(prev => prev.map(s => s.id === nou.id ? { ...s, id: res.swap.id } : s));
+        }
+      }).catch(err => {
+        console.error('Eroare la salvarea swap-ului in Supabase:', err);
+        incarcaTotul();
+      });
+    }
   };
 
   const stergeSwap = (id: string) => {
@@ -339,16 +592,107 @@ export default function RotaFlow() {
     return {ok:false,text:`${diff>0?b.nume:a.nume} datorează ${Math.abs(diff)}h`};
   };
 
+  // ─── Simulare Concedii ───
+  const verificaSiAdaugaSim = () => {
+    const nou: SimConcediu = { id: Date.now().toString(), angajatId: echipa[simTargetIdx].id, start: simStart, zile: simZile };
+    const concediiTestate = [...simConcedii, nou];
+    const startCheck = parseD(simStart);
+    const issues = analizeazaConformitate(echipa, concediiTestate, simSuplinitor, startCheck, simZile);
+
+    if (issues.length > 0) {
+      // Sunt probleme — afisam alerta, nu adaugam inca
+      setSimIssues(issues);
+      setSimPendingAction('add');
+      setSimPendingPayload(nou);
+    } else {
+      // Fara probleme — adaugam direct
+      setSimConcedii(prev => [...prev, nou]);
+      setSimIssues([]);
+    }
+  };
+
+  const confirmaAdaugareSimCuProbleme = (activeazaSuplinitor: boolean) => {
+    if (!simPendingPayload) return;
+    if (activeazaSuplinitor) setSimSuplinitor(true);
+    setSimConcedii(prev => [...prev, simPendingPayload]);
+    setSimPendingAction(null);
+    setSimPendingPayload(null);
+    setSimIssues([]);
+  };
+
+  const anuleazaAdaugareSim = () => {
+    setSimPendingAction(null);
+    setSimPendingPayload(null);
+    setSimIssues([]);
+  };
+
+  const stergeSimConcediu = (id: string) => {
+    setSimConcedii(prev => prev.filter(c => c.id !== id));
+  };
+
+  const reseteazaSimulare = () => {
+    setSimConcedii([]);
+    setSimSuplinitor(false);
+    setSimIssues([]);
+    setSimPendingAction(null);
+    setSimPendingPayload(null);
+  };
+
+  // Aplica rezultatul simularii in calendarul real — converteste SimConcediu in Concediu pe fiecare angajat
+  const aplicaSimulareInReal = () => {
+    if (simConcedii.length === 0) return;
+
+    const operatiiApi: Promise<unknown>[] = [];
+
+    setEchipa(prev => prev.map(m => {
+      const concediiAngajat = simConcedii.filter(sc => sc.angajatId === m.id);
+      if (concediiAngajat.length === 0) return m;
+      const noiConcedii: Concediu[] = concediiAngajat.map(sc => {
+        const start = parseD(sc.start);
+        const end = new Date(start.getTime() + (sc.zile - 1) * 86400000);
+        return { n: `${fmtDate(start)}–${fmtDate(end)}`, s: sc.start, e: fmtDateInput(end) };
+      });
+      const zileTotale = concediiAngajat.reduce((acc, sc) => acc + countZileLucratoare(sc.start, fmtDateInput(new Date(parseD(sc.start).getTime() + (sc.zile-1)*86400000))), 0);
+
+      if (m.uuid) {
+        concediiAngajat.forEach(sc => {
+          const start = parseD(sc.start);
+          const end = new Date(start.getTime() + (sc.zile - 1) * 86400000);
+          const nume_slot = `${fmtDate(start)}–${fmtDate(end)}`;
+          const zl = countZileLucratoare(sc.start, fmtDateInput(end));
+          operatiiApi.push(apiAdaugaConcediu(m.uuid!, sc.start, fmtDateInput(end), nume_slot, zl));
+        });
+      }
+
+      return { ...m, concedii: [...m.concedii, ...noiConcedii], zileCO: Math.max(0, m.zileCO - zileTotale) };
+    }));
+
+    if (simSuplinitor) setSuplinitorActiv(true);
+    addLog(`Simulare aplicată: ${simConcedii.length} concedii adăugate în calendarul real`);
+    reseteazaSimulare();
+    setShowSimulare(false);
+
+    Promise.all(operatiiApi).catch(err => {
+      console.error('Eroare la aplicarea simularii in Supabase:', err);
+      incarcaTotul();
+    });
+  };
+
   const salveazaNume = useCallback((i:number)=>{
     const v=tempNume.trim();
-    if(v){
-      setEchipa(prev=>{
-        addLog(`Nume schimbat: ${prev[i].nume} → ${v}`);
-        return prev.map((m,idx)=>idx===i?{...m,nume:v}:m);
-      });
+    const angajatTarget = echipa[i];
+    if(v && angajatTarget){
+      setEchipa(prev=>prev.map((m,idx)=>idx===i?{...m,nume:v}:m));
+      addLog(`Nume schimbat: ${angajatTarget.nume} → ${v}`);
+      if (angajatTarget.uuid) {
+        apiActualizeazaAngajat(angajatTarget.uuid, { nume: v }).catch(err => {
+          console.error('Eroare la salvarea numelui in Supabase:', err);
+          incarcaTotul();
+        });
+      }
     }
     setEditIdx(null);
-  },[tempNume, setEchipa, addLog]);
+  },[tempNume, setEchipa, addLog, echipa, incarcaTotul]);
 
   // ─── PDF complet (luna intreaga) ───
   const generatePDF = () => {
@@ -420,6 +764,31 @@ export default function RotaFlow() {
 
   const inputCls = "w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-[#60cdff]/50 transition-all";
 
+  if (seIncarca) {
+    return (
+      <div className="min-h-screen bg-[#1c1c1e] flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#60cdff] to-[#0078d4] flex items-center justify-center text-[16px] font-black text-white shadow-lg shadow-[#0078d4]/30 mx-auto mb-4 animate-pulse">R</div>
+          <p className="text-zinc-500 text-[13px]">Se încarcă datele din RotaFlow...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (eroareIncarcare) {
+    return (
+      <div className="min-h-screen bg-[#1c1c1e] flex items-center justify-center px-6">
+        <div className="text-center max-w-md">
+          <p className="text-red-400 text-[14px] font-semibold mb-2">Eroare la conectare</p>
+          <p className="text-zinc-500 text-[13px] mb-4">{eroareIncarcare}</p>
+          <button onClick={incarcaTotul} className="bg-[#0078d4] hover:bg-[#0086ef] text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors">
+            Încearcă din nou
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <style>{PRINT_STYLES}</style>
@@ -461,6 +830,9 @@ export default function RotaFlow() {
             </button>
             <button onClick={()=>setShowUrgente(true)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] font-semibold transition-all ${modeAvarie?'bg-orange-900/50 border-orange-500/50 text-orange-300 animate-pulse':'bg-rose-900/40 border-rose-500/30 text-rose-300 hover:bg-rose-800/50'}`}>
               <AlertTriangle size={13}/> Urgențe
+            </button>
+            <button onClick={()=>setShowSimulare(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-900/40 border border-purple-500/30 text-purple-300 text-[12px] font-semibold hover:bg-purple-800/50 transition-all">
+              <FlaskConical size={13}/> Simulare Concedii
             </button>
           </div>
         </div>
@@ -1014,6 +1386,171 @@ export default function RotaFlow() {
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Modal Simulare Concedii ── */}
+        {showSimulare&&(
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+            <div className="bg-[#1c1c1e] border border-purple-500/20 rounded-2xl w-full max-w-5xl max-h-[92vh] shadow-2xl flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.08] flex-shrink-0 bg-purple-950/20">
+                <div className="flex items-center gap-2">
+                  <FlaskConical size={16} className="text-purple-400"/>
+                  <span className="font-bold text-[14px]">Simulare Concedii</span>
+                  <span className="text-[10px] text-purple-400/70 bg-purple-900/30 px-2 py-0.5 rounded-full">Mod testare — nu afectează calendarul real</span>
+                </div>
+                <button onClick={()=>setShowSimulare(false)} className="w-7 h-7 flex items-center justify-center bg-white/[0.07] hover:bg-white/10 text-zinc-400 rounded-md"><X size={15}/></button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-5 space-y-5">
+
+                {/* Form adaugare concediu simulat */}
+                <div className="bg-[#2c2c2e] border border-white/[0.07] rounded-xl p-4">
+                  <p className="text-[11px] font-bold text-purple-300 uppercase tracking-wider mb-3">Adaugă concediu de test</p>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div>
+                      <label className="text-[10px] text-zinc-500 mb-1 block">Angajat</label>
+                      <select value={simTargetIdx} onChange={e=>setSimTargetIdx(Number(e.target.value))}
+                        className="w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-purple-500/50">
+                        {echipa.map((m,i)=>(<option key={i} value={i}>{m.nume}</option>))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-500 mb-1 block">Data start</label>
+                      <input type="date" value={simStart} onChange={e=>setSimStart(e.target.value)}
+                        className="w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-purple-500/50"/>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-500 mb-1 block">Număr zile ({simZile})</label>
+                      <input type="range" min={1} max={31} value={simZile} onChange={e=>setSimZile(Number(e.target.value))} className="w-full accent-purple-500 mt-2.5"/>
+                    </div>
+                    <div className="flex items-end">
+                      <button onClick={verificaSiAdaugaSim} className="w-full bg-purple-900/40 hover:bg-purple-900/60 border border-purple-500/40 text-purple-300 font-semibold text-[12px] py-2 rounded-lg transition-all flex items-center justify-center gap-1.5">
+                        <Plus size={13}/> Adaugă
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-zinc-600 mt-2">Perioada se calculează liber, de la 1 până la 31 de zile — fără restricția sloturilor fixe de 6 zile.</p>
+                </div>
+
+                {/* ALERTĂ conformitate cu confirmare */}
+                {simPendingAction === 'add' && simIssues.length > 0 && (
+                  <div className="bg-red-950/40 border-2 border-red-500/50 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle size={18} className="text-red-400 flex-shrink-0"/>
+                      <span className="font-bold text-red-300 text-[13px]">ATENȚIE — Probleme de conformitate detectate!</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {simIssues.map((iss,ii)=>(
+                        <div key={ii} className="flex items-start gap-2 bg-black/30 rounded-lg px-3 py-2">
+                          <span className="text-red-400 text-[11px] font-bold flex-shrink-0">{iss.tip==='PUTINI_OAMENI'?'⚠ NU AI SUFICIENȚI OAMENI!':'⚠ ORE PESTE LIMITĂ!'}</span>
+                        </div>
+                      ))}
+                      {simIssues.slice(0,5).map((iss,ii)=>(
+                        <p key={'d'+ii} className="text-[11px] text-red-300/80 pl-2">· {iss.detalii}</p>
+                      ))}
+                      {simIssues.length > 5 && <p className="text-[10px] text-red-400/60 pl-2">...și încă {simIssues.length-5} probleme similare.</p>}
+                    </div>
+                    <div className="border-t border-red-500/20 pt-3">
+                      <p className="text-[12px] text-white font-semibold mb-2">Continui oricum?</p>
+                      <div className="flex gap-2">
+                        <button onClick={anuleazaAdaugareSim} className="flex-1 bg-zinc-800 border border-zinc-600 text-zinc-300 font-semibold text-[12px] py-2 rounded-lg hover:bg-zinc-700 transition-all">
+                          Nu, renunț
+                        </button>
+                        <button onClick={()=>confirmaAdaugareSimCuProbleme(false)} className="flex-1 bg-red-900/40 border border-red-500/40 text-red-300 font-semibold text-[12px] py-2 rounded-lg hover:bg-red-900/60 transition-all">
+                          Da, continui fără suplinitor
+                        </button>
+                        <button onClick={()=>confirmaAdaugareSimCuProbleme(true)} className="flex-1 bg-emerald-900/40 border border-emerald-500/40 text-emerald-300 font-semibold text-[12px] py-2 rounded-lg hover:bg-emerald-900/60 transition-all flex items-center justify-center gap-1.5">
+                          <Plus size={13}/> Da, adaugă suplinitor
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Lista concedii simulate */}
+                {simConcedii.length > 0 && (
+                  <div className="bg-[#2c2c2e] border border-white/[0.07] rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Concedii în simulare ({simConcedii.length})</p>
+                      <button onClick={reseteazaSimulare} className="text-[10px] text-zinc-600 hover:text-red-400 transition-colors">Resetează tot</button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {simConcedii.map(sc=>{
+                        const ang=echipa.find(m=>m.id===sc.angajatId);
+                        const start=parseD(sc.start);
+                        const end=new Date(start.getTime()+(sc.zile-1)*86400000);
+                        return (
+                          <span key={sc.id} className="flex items-center gap-1.5 bg-purple-950/40 border border-purple-500/25 text-purple-300 text-[10px] px-2.5 py-1 rounded-full">
+                            <strong>{ang?.nume}</strong> {fmtDate(start)}–{fmtDate(end)} ({sc.zile}z)
+                            <button onClick={()=>stergeSimConcediu(sc.id)} className="text-purple-500 hover:text-purple-200 ml-0.5 leading-none">×</button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                    {simSuplinitor && (
+                      <div className="mt-2 inline-flex items-center gap-1.5 bg-emerald-950/30 border border-emerald-500/25 text-emerald-300 text-[10px] px-2.5 py-1 rounded-full">
+                        <Check size={11}/> Suplinitor activ în simulare
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Vizualizare rotatie simulata */}
+                {simConcedii.length > 0 && (
+                  <div className="bg-[#2c2c2e] border border-white/[0.07] rounded-xl overflow-hidden">
+                    <div className="px-4 py-3 border-b border-white/[0.07] flex items-center justify-between">
+                      <span className="font-semibold text-[12px] text-zinc-300">Previzualizare rotație simulată</span>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={()=>setSimWeekOffset(o=>o-1)} className="w-6 h-6 flex items-center justify-center bg-white/5 hover:bg-white/10 border border-white/[0.08] rounded-md text-zinc-400"><ChevronLeft size={13}/></button>
+                        <span className="text-[11px] font-mono text-zinc-400 min-w-[120px] text-center">{fmtDate(simDays[0])} – {fmtDate(simDays[6])}</span>
+                        <button onClick={()=>setSimWeekOffset(o=>o+1)} className="w-6 h-6 flex items-center justify-center bg-white/5 hover:bg-white/10 border border-white/[0.08] rounded-md text-zinc-400"><ChevronRight size={13}/></button>
+                      </div>
+                    </div>
+                    <div className="overflow-x-auto p-3">
+                      <table className="w-full border-separate border-spacing-1.5">
+                        <thead>
+                          <tr>
+                            <th className="text-left text-[10px] font-semibold text-zinc-500 uppercase pl-2 pb-1 w-28">Angajat</th>
+                            {simDays.map((d,i)=>(
+                              <th key={i} className="text-center text-[10px] font-semibold text-zinc-500 uppercase pb-1">{DAY_SHORT[i]}<br/><span className="text-[9px] font-normal opacity-60">{fmtDate(d)}</span></th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(simSuplinitor?[...echipa,SUPLINITOR_OBJ]:echipa).map((m,mi)=>(
+                            <tr key={mi}>
+                              <td className="pl-2 pr-2 py-1 font-semibold text-[12px] text-zinc-200 whitespace-nowrap">{m.nume}</td>
+                              {simDays.map((d,di)=>{
+                                const t=getTuraSim(d,m,echipa,simConcedii,simSuplinitor);
+                                const style=SHIFT_STYLE[t.type]??SHIFT_STYLE.L;
+                                return (<td key={di} className="text-center"><div className={`text-[11px] font-bold py-1.5 rounded-lg ${style}`}>{t.label}</div></td>);
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer - Aplica in real */}
+              <div className="border-t border-white/[0.08] px-5 py-4 flex items-center justify-between bg-black/20 flex-shrink-0">
+                <p className="text-[11px] text-zinc-500">
+                  {simConcedii.length === 0 ? 'Adaugă cel puțin un concediu de test pentru a vedea rezultatul.' : `${simConcedii.length} concedii pregătite${simSuplinitor?' · suplinitor inclus':''}.`}
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={()=>{reseteazaSimulare();setShowSimulare(false);}} className="bg-zinc-800 border border-zinc-600 text-zinc-300 font-semibold text-[12px] px-4 py-2 rounded-lg hover:bg-zinc-700 transition-all">
+                    Închide fără salvare
+                  </button>
+                  <button onClick={aplicaSimulareInReal} disabled={simConcedii.length===0}
+                    className={`font-semibold text-[12px] px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 ${simConcedii.length===0?'bg-zinc-800 text-zinc-600 cursor-not-allowed':'bg-emerald-900/40 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60'}`}>
+                    <Check size={14}/> Aplică în calendarul real
+                  </button>
+                </div>
               </div>
             </div>
           </div>
