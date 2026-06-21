@@ -168,7 +168,15 @@ function faraDiacritice(s: string): string {
     .replace(/ţ/g,'t').replace(/Ţ/g,'T');
 }
 function fmtMonth(d: Date) { return d.toLocaleDateString('ro-RO', { month: 'long', year: 'numeric' }); }
-function fmtDateInput(d: Date) { return d.toISOString().split('T')[0]; }
+// CRITIC: foloseste componentele LOCALE ale datei, NU toISOString() (care converteste la UTC
+// si poate "taia" o zi pentru fusuri orare est-europene precum Romania, UTC+2/+3).
+// Acest bug afecta potrivirea swap-urilor cu zilele din calendar — vezi audit complet.
+function fmtDateInput(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
 function fmtTs(d: Date) {
   return d.toLocaleDateString('ro-RO',{day:'2-digit',month:'2-digit',year:'numeric'}) + ' ' +
     d.toLocaleTimeString('ro-RO',{hour:'2-digit',minute:'2-digit'});
@@ -759,6 +767,11 @@ export default function RotaFlow() {
     const a=echipa.find(m=>m.id===sw?.aId), b=echipa.find(m=>m.id===sw?.bId);
     setSwapuri(prev=>prev.filter(s=>s.id!==id));
     addLog(`Swap șters: ${a?.nume} ↔ ${b?.nume}`);
+
+    fetch(`/api/swap?id=${id}`, { method: 'DELETE' }).catch(err => {
+      console.error('Eroare la stergerea swap-ului din Supabase:', err);
+      incarcaTotul();
+    });
   };
 
   const calcBalanta = (sw: Swap) => {
@@ -1605,7 +1618,14 @@ export default function RotaFlow() {
                   <Clock size={13} className="text-[#60cdff]"/>
                   <span className="font-semibold text-[12px] text-zinc-300">Istoric modificări</span>
                 </div>
-                <button onClick={()=>setLogRaw([])} className="text-[11px] text-zinc-600 hover:text-red-400 transition-colors">Șterge tot</button>
+                <button onClick={()=>{
+                  if (!confirm('Sigur vrei să ștergi tot istoricul? Această acțiune nu poate fi anulată.')) return;
+                  setLogRaw([]);
+                  fetch('/api/istoric', { method: 'DELETE' }).catch(err => {
+                    console.error('Eroare la stergerea istoricului din Supabase:', err);
+                    incarcaTotul();
+                  });
+                }} className="text-[11px] text-zinc-600 hover:text-red-400 transition-colors">Șterge tot</button>
               </div>
               {log.length===0?(
                 <div className="p-8 text-center text-zinc-600 text-[12px]">Nicio modificare înregistrată încă.</div>
