@@ -242,13 +242,22 @@ function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: b
   const dStr = fmtDateInput(d);
   const swA = swapuri.find(sw => sw.aId===m.id && sw.aData===dStr);
   const swB = swapuri.find(sw => sw.bId===m.id && sw.bData===dStr);
+  // Un swap e valid doar daca tura "imprumutata" e o tura reala de lucru (D/S).
+  // Daca persoana cealalta e de fapt in CO/CM/AN in acea zi (date introduse gresit
+  // sau modificate ulterior), NU mostenim acea stare absurda — afisam tura normala proprie.
   if (swA) {
     const b = toataEchipa.find(x => x.id===swA.bId);
-    if (b) { const t=getTuraBaza(parseD(swA.bData),b,toataEchipa,suplinitorActiv); return {...t,label:t.label+'↔',swapped:true}; }
+    if (b) {
+      const t=getTuraBaza(parseD(swA.bData),b,toataEchipa,suplinitorActiv);
+      if (t.type==='D'||t.type==='S') return {...t,label:t.label+'↔',swapped:true};
+    }
   }
   if (swB) {
     const a = toataEchipa.find(x => x.id===swB.aId);
-    if (a) { const t=getTuraBaza(parseD(swB.aData),a,toataEchipa,suplinitorActiv); return {...t,label:t.label+'↔',swapped:true}; }
+    if (a) {
+      const t=getTuraBaza(parseD(swB.aData),a,toataEchipa,suplinitorActiv);
+      if (t.type==='D'||t.type==='S') return {...t,label:t.label+'↔',swapped:true};
+    }
   }
   return getTuraBaza(d, m, toataEchipa, suplinitorActiv);
 }
@@ -310,10 +319,13 @@ function analizeazaConformitate(echipa: Angajat[], simConcedii: SimConcediu[], s
     }
   }
 
-  // Verifica ore saptamanale pentru fiecare angajat, pe ferestre de 7 zile in intervalul verificat
+  // Verifica ore saptamanale pentru fiecare angajat, aliniat la saptamani calendaristice reale (Luni-Duminica)
+  // — nu pe ferestre alunecatoare de 7 zile pornind din ziua aleasa de utilizator, ca sa corespunda
+  // exact modului in care legea (Art. 114) defineste saptamana de lucru
   echipa.forEach(m => {
-    for (let i = 0; i < zileCheck; i += 7) {
-      const wkStart = new Date(startCheck.getTime() + i * 86400000);
+    const primaLuni = getMonday(startCheck);
+    const ultimaZi = new Date(startCheck.getTime() + (zileCheck - 1) * 86400000);
+    for (let wkStart = new Date(primaLuni); wkStart <= ultimaZi; wkStart = new Date(wkStart.getTime() + 7*86400000)) {
       let ore = 0;
       for (let j = 0; j < 7; j++) {
         const d = new Date(wkStart.getTime() + j * 86400000);
@@ -321,7 +333,11 @@ function analizeazaConformitate(echipa: Angajat[], simConcedii: SimConcediu[], s
         if (t.type === 'D' || t.type === 'S') ore += 8;
       }
       if (ore > pragOreMax) {
-        issues.push({ tip: 'ORE_MAXIME', data: fmtDateInput(wkStart), detalii: `${m.nume}: ${ore}h în săptămâna din ${fmtDate(wkStart)} (limită legală: ${pragOreMax}h)` });
+        const key = `${m.id}_${fmtDateInput(wkStart)}`;
+        if (!zileSet.has('ORE_'+key)) {
+          zileSet.add('ORE_'+key);
+          issues.push({ tip: 'ORE_MAXIME', data: fmtDateInput(wkStart), detalii: `${m.nume}: ${ore}h în săptămâna din ${fmtDate(wkStart)} (limită legală: ${pragOreMax}h)` });
+        }
       }
     }
   });
@@ -553,18 +569,23 @@ export default function RotaFlow() {
   }, [echipa, suplinitorFinal, swapuri]);
 
   // Interval real de date pe baza selectiei de perioada pentru Raport Echitate
+  // IMPORTANT: end nu poate depasi ziua de azi — un raport de echitate reflecta DOAR trecutul real
   const echitateInterval = useMemo(() => {
-    const azi = new Date();
+    const azi = new Date(); azi.setHours(23,59,59,999);
+    const aziStartZi = new Date(); aziStartZi.setHours(0,0,0,0);
     if (echitatePerioada === 'luna') {
-      return { start: new Date(azi.getFullYear(), azi.getMonth(), 1), end: new Date(azi.getFullYear(), azi.getMonth()+1, 0) };
+      const endLuna = new Date(azi.getFullYear(), azi.getMonth()+1, 0);
+      return { start: new Date(azi.getFullYear(), azi.getMonth(), 1), end: endLuna < azi ? endLuna : aziStartZi };
     }
     if (echitatePerioada === 'trimestru') {
-      return { start: new Date(azi.getFullYear(), azi.getMonth()-2, 1), end: new Date(azi.getFullYear(), azi.getMonth()+1, 0) };
+      const endLuna = new Date(azi.getFullYear(), azi.getMonth()+1, 0);
+      return { start: new Date(azi.getFullYear(), azi.getMonth()-2, 1), end: endLuna < azi ? endLuna : aziStartZi };
     }
     if (echitatePerioada === 'an') {
-      return { start: new Date(azi.getFullYear(), 0, 1), end: azi };
+      return { start: new Date(azi.getFullYear(), 0, 1), end: aziStartZi };
     }
-    return { start: parseD(echitateCustomStart), end: parseD(echitateCustomEnd) };
+    const customEnd = parseD(echitateCustomEnd);
+    return { start: parseD(echitateCustomStart), end: customEnd < aziStartZi ? customEnd : aziStartZi };
   }, [echitatePerioada, echitateCustomStart, echitateCustomEnd]);
 
   // Statistici de echitate per angajat, pentru intervalul selectat
@@ -624,11 +645,28 @@ export default function RotaFlow() {
     const angajatTarget = echipa[urgTargetIdx];
     if (!angajatTarget?.uuid) return;
 
-    setEchipa(prev=>prev.map((m,i)=>i!==urgTargetIdx?m:{...m,absente:[...m.absente,{startDate:urgStart,zile:urgZile,tip:urgTip}]}));
-    addLog(`${urgTip} adăugat: ${angajatTarget.nume} — ${urgStart} · ${urgZile}z`);
+    // Daca perioada de CM/AN se suprapune cu zile deja marcate CO, restauram acele zile de CO
+    // (CM/AN au prioritate peste CO; angajatul nu trebuie sa piarda zile de concediu nefolosite)
+    let zileCORestaurate = 0;
+    const urgEnd = new Date(parseD(urgStart).getTime() + (urgZile - 1) * 86400000);
+    for (let d = parseD(urgStart); d <= urgEnd; d = new Date(d.getTime() + 86400000)) {
+      const wd = d.getDay();
+      if (wd > 0 && wd < 6 && !isSarbatoare(d) && inCO(d, angajatTarget)) zileCORestaurate++;
+    }
+
+    setEchipa(prev=>prev.map((m,i)=>i!==urgTargetIdx?m:{
+      ...m,
+      absente:[...m.absente,{startDate:urgStart,zile:urgZile,tip:urgTip}],
+      zileCO: m.zileCO + zileCORestaurate,
+    }));
+    addLog(`${urgTip} adăugat: ${angajatTarget.nume} — ${urgStart} · ${urgZile}z${zileCORestaurate>0?` (${zileCORestaurate} zile CO restaurate, suprapuse cu concediu existent)`:''}`);
     setShowUrgente(false);
 
-    apiAdaugaAbsenta(angajatTarget.uuid, urgTip, urgStart, urgZile).catch(err => {
+    apiAdaugaAbsenta(angajatTarget.uuid, urgTip, urgStart, urgZile).then(() => {
+      if (zileCORestaurate > 0 && angajatTarget.uuid) {
+        apiActualizeazaAngajat(angajatTarget.uuid, { zile_co: angajatTarget.zileCO + zileCORestaurate }).catch(() => {});
+      }
+    }).catch(err => {
       console.error('Eroare la salvarea absentei in Supabase:', err);
       incarcaTotul();
     });
@@ -651,7 +689,7 @@ export default function RotaFlow() {
   };
 
   const adaugaSwap = () => {
-    if(swAId===swBId&&swAData===swBData) return;
+    if(swAId===swBId) return; // nu poti face swap cu tine insuti, indiferent de date
     const nou: Swap = {id:Date.now().toString(),aId:swAId,aData:swAData,bId:swBId,bData:swBData,nota:swNota};
     setSwapuri(prev=>[...prev,nou]);
     const a=echipa.find(m=>m.id===swAId), b=echipa.find(m=>m.id===swBId);
@@ -1432,7 +1470,11 @@ export default function RotaFlow() {
                 <div className="mt-4 space-y-2">
                   <input type="text" value={swNota} onChange={e=>setSwNota(e.target.value)} placeholder="Motiv (ex: nuntă, eveniment personal...)"
                     className={inputCls+' placeholder:text-zinc-700'}/>
-                  <button onClick={adaugaSwap} className="w-full bg-sky-900/30 hover:bg-sky-900/50 border border-sky-500/30 text-sky-300 font-semibold text-[12px] py-2.5 rounded-lg transition-all flex items-center justify-center gap-2">
+                  {swAId===swBId && (
+                    <p className="text-[10px] text-red-400 mb-2">Selectează doi angajați diferiți pentru schimb.</p>
+                  )}
+                  <button onClick={adaugaSwap} disabled={swAId===swBId}
+                    className="w-full bg-sky-900/30 hover:bg-sky-900/50 border border-sky-500/30 text-sky-300 font-semibold text-[12px] py-2.5 rounded-lg transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
                     <ArrowLeftRight size={13}/> Înregistrează Swap
                   </button>
                 </div>
