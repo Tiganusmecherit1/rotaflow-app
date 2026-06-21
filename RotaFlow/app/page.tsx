@@ -77,7 +77,20 @@ function fmtTs(d: Date) {
 }
 
 function inCO(d: Date, m: Angajat): boolean {
-  return m.concedii.some(c => { const s=parseD(c.s),e=parseD(c.e); e.setHours(23,59,59); return d>=s&&d<=e; });
+  // Verificare directa - data e in interiorul unui concediu existent
+  if (m.concedii.some(c => { const s=parseD(c.s),e=parseD(c.e); e.setHours(23,59,59); return d>=s&&d<=e; })) return true;
+
+  // Verificare "punte" - daca data e exact 1 zi intre sfarsitul unui concediu si inceputul altuia
+  // (sloturi adiacente, ex: 06-11 Apr + 13-18 Apr -> 12 Apr e tratat ca CO, fara cost suplimentar)
+  return m.concedii.some(c1 => m.concedii.some(c2 => {
+    if (c1 === c2) return false;
+    const e1 = parseD(c1.e);
+    const s2 = parseD(c2.s);
+    const gapStart = new Date(e1.getTime() + 86400000);
+    const gapEnd = new Date(s2.getTime() - 86400000);
+    if (gapStart.getTime() !== gapEnd.getTime()) return false; // gap trebuie sa fie exact 1 zi
+    return d.toDateString() === gapStart.toDateString();
+  }));
 }
 function inAbsenta(d: Date, m: Angajat, tip: 'CM'|'AN'|'any'): boolean {
   return m.absente.some(a => {
