@@ -42,6 +42,7 @@ const LS_KEY = 'rotaflow_v1';
 interface Concediu { n: string; s: string; e: string; uuid?: string }
 interface Absenta { startDate: string; zile: number; tip: 'CM' | 'AN'; uuid?: string }
 interface Swap { id: string; aId: number; aData: string; bId: number; bData: string; nota: string }
+interface TuraOverride { id: string; angajatId: number; data: string; tura: 'D'|'S'|'L'; expiraLa: string } // expiraLa = data plecarii suplinitorului
 interface Angajat { id: number; uuid?: string; nume: string; zileCO: number; concedii: Concediu[]; absente: Absenta[] }
 interface LogEntry { ts: string; msg: string }
 interface SimConcediu { id: string; angajatId: number; start: string; zile: number }
@@ -271,13 +272,20 @@ function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActi
   return { type: 'L', label: 'L' };
 }
 
-function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean, swapuri: Swap[]): { type: string; label: string; swapped?: boolean } {
+function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean, swapuri: Swap[], turaOverride: TuraOverride[] = []): { type: string; label: string; swapped?: boolean } {
   const dStr = fmtDateInput(d);
+
+  // Override de criză — are prioritate maximă, mai mare decât swap-urile normale
+  // Se aplică doar dacă nu a expirat (data curentă < expiraLa)
+  const override = turaOverride.find(o =>
+    o.angajatId === m.id &&
+    o.data === dStr &&
+    parseD(o.expiraLa) > d
+  );
+  if (override) return { type: override.tura, label: override.tura + '⚡', swapped: false };
+
   const swA = swapuri.find(sw => sw.aId===m.id && sw.aData===dStr);
   const swB = swapuri.find(sw => sw.bId===m.id && sw.bData===dStr);
-  // Un swap e valid doar daca tura "imprumutata" e o tura reala de lucru (D/S).
-  // Daca persoana cealalta e de fapt in CO/CM/AN in acea zi (date introduse gresit
-  // sau modificate ulterior), NU mostenim acea stare absurda — afisam tura normala proprie.
   if (swA) {
     const b = toataEchipa.find(x => x.id===swA.bId);
     if (b) {
@@ -568,6 +576,7 @@ export default function RotaFlow() {
   // ─── State — initial gol, populat din Supabase la montare ───
   const [echipa, setEchipaRaw] = useState<Angajat[]>([]);
   const [swapuri, setSwapuriRaw] = useState<Swap[]>([]);
+  const [turaOverride, setTuraOverride] = useState<TuraOverride[]>([]);
   const [log, setLogRaw] = useState<LogEntry[]>([]);
   const [suplinitorActiv, setSuplinitorActivRaw] = useState<boolean>(false);
   const [seIncarca, setSeIncarca] = useState(true);
@@ -720,12 +729,18 @@ export default function RotaFlow() {
   const suplinitorFinal = suplinitorActiv || suplinitorAutoActiv;
   const modeAvarie = useMemo(() => echipa.some(m => days.some(d => inAbsenta(d,m,'CM'))), [echipa,days]);
 
-  const getTuraW = useCallback((d: Date, m: Angajat) => getTura(d,m,echipa,suplinitorFinal,swapuri), [echipa,suplinitorFinal,swapuri]);
+  const getTuraW = useCallback((d: Date, m: Angajat) => getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride), [echipa,suplinitorFinal,swapuri,turaOverride]);
 
   // Alerte ore maxime (Art. 114 — max 48h/saptamana)
   const alerteOre = useMemo(() => {
     return echipa.filter(m => calcOreSaptamana(m, weekStart, echipa, suplinitorFinal, swapuri) > 48).map(m => m.nume);
   }, [echipa, weekStart, suplinitorFinal, swapuri]);
+
+  // Detecteaza daca exista override-uri de criza active (planul de criza e aplicat)
+  const crizaActiva = useMemo(() => {
+    const azi = new Date(); azi.setHours(0,0,0,0);
+    return turaOverride.some(o => o.id.startsWith('criza_') && parseD(o.expiraLa) > azi);
+  }, [turaOverride]);
 
   // Alerta personal insuficient — verifica fiecare zi din saptamana afisata daca raman sub 3 activi
   // (acopera CO/CM/AN reale, nu doar in Simulare — sefii vede problema direct in calendarul normal)
@@ -1013,6 +1028,49 @@ export default function RotaFlow() {
     setSimPendingPayload(null);
   };
 
+  // ─── Aplica Planul de Criza in calendarul real ───
+  const aplicaPlanCriza = () => {
+    if (!planCriza) return;
+
+    // 1. Activam suplinitorul
+    setSuplinitorActiv(true);
+
+    // 2. Generam override-uri pentru colegii locali, doar pe zilele cu tură diferita fata de rotatie normala
+    // Acoperim doar faza de criza (cu suplinitor), nu si recuperarea
+    const noileOverride: TuraOverride[] = [];
+    const expiraLa = planCriza.dataPlecareSup; // override-urile expira cand pleaca suplinitorul
+
+    planCriza.plan
+      .filter(zi => zi.cuSuplinitor) // doar zilele de criza, nu recuperarea
+      .forEach(zi => {
+        const d = parseD(zi.data);
+        echipa.forEach(m => {
+          const turaPlan = zi.ture[m.id];
+          if (!turaPlan) return;
+          // Calculam tura normala (fara override) ca sa vedem daca planul difera
+          const turaNormala = getTuraBaza(d, m, echipa, true); // cu suplinitor activ
+          if (turaPlan !== turaNormala.type) {
+            noileOverride.push({
+              id: `criza_${m.id}_${zi.data}`,
+              angajatId: m.id,
+              data: zi.data,
+              tura: turaPlan,
+              expiraLa,
+            });
+          }
+        });
+      });
+
+    setTuraOverride(prev => {
+      // Stergem eventuale override-uri vechi de criza pentru aceeasi perioada
+      const filtrate = prev.filter(o => !o.id.startsWith('criza_'));
+      return [...filtrate, ...noileOverride];
+    });
+
+    addLog(`Plan Criză aplicat: suplinitor activ, ${noileOverride.length} override-uri de tură până la ${expiraLa}`);
+    setShowPlanCriza(false);
+  };
+
   // Aplica rezultatul simularii in calendarul real — converteste SimConcediu in Concediu pe fiecare angajat
   const aplicaSimulareInReal = () => {
     if (simConcedii.length === 0) return;
@@ -1228,6 +1286,11 @@ export default function RotaFlow() {
             {alertePersonalInsuficient.length > 0 && (
               <span className="flex items-center gap-1 bg-amber-950/60 border border-amber-500/40 text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded-full">
                 <AlertTriangle size={9}/> Personal insuficient — {alertePersonalInsuficient.length} {alertePersonalInsuficient.length===1?'zi':'zile'}!
+              </span>
+            )}
+            {crizaActiva && (
+              <span onClick={()=>setShowPlanCriza(true)} className="flex items-center gap-1 bg-orange-950/60 border border-orange-500/40 text-orange-300 text-[10px] font-bold px-2 py-0.5 rounded-full cursor-pointer hover:bg-orange-900/50 transition-colors">
+                ⚡ Plan Criză activ
               </span>
             )}
           </div>
@@ -2023,9 +2086,19 @@ export default function RotaFlow() {
                         className="flex-1 bg-[#2c2c2e] border border-white/[0.07] text-zinc-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-white/[0.05] transition-all">
                         🔄 Regenerează plan
                       </button>
-                      <button onClick={()=>setShowPlanCriza(false)}
-                        className="flex-1 bg-emerald-900/30 border border-emerald-500/30 text-emerald-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-emerald-900/50 transition-all">
-                        ✓ Am înțeles, închide
+                      {crizaActiva && (
+                        <button onClick={()=>{
+                          setTuraOverride(prev => prev.filter(o => !o.id.startsWith('criza_')));
+                          setSuplinitorActiv(false);
+                          addLog('Plan Criză anulat — override-uri de tură șterse, suplinitor dezactivat');
+                          setShowPlanCriza(false);
+                        }} className="flex-1 bg-red-900/30 border border-red-500/30 text-red-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-red-900/50 transition-all">
+                          ✕ Anulează criza
+                        </button>
+                      )}
+                      <button onClick={aplicaPlanCriza}
+                        className="flex-1 bg-emerald-900/40 border border-emerald-500/40 text-emerald-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-emerald-900/60 transition-all flex items-center justify-center gap-1.5">
+                        <Check size={13}/> Aplică în calendarul real
                       </button>
                     </div>
                   </>
