@@ -350,20 +350,29 @@ interface PlanCriza {
   plan: PlanCrizaZi[];
 }
 
-function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string): PlanCriza | null {
+function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim: SimConcediu[] = []): PlanCriza | null {
   const dataStart = parseD(dataStartStr);
+
+  // Verifica daca un angajat e absent (CO real SAU CO simulat)
+  const eAbsent = (m: Angajat, d: Date) => {
+    if (inCO(d, m) || inAbsenta(d, m, 'any')) return true;
+    // Include si concediile simulate care nu sunt inca in calendarul real
+    return concediiSim.some(sc => {
+      if (sc.angajatId !== m.id) return false;
+      const s = parseD(sc.start);
+      const e = new Date(s.getTime() + (sc.zile - 1) * 86400000);
+      return d >= s && d <= e;
+    });
+  };
 
   // Gasim prima zi cand 4+ angajati sunt activi (suplinitorul poate pleca)
   let dataPlecareSup: Date | null = null;
   for (let i = 0; i < 90; i++) {
     const d = new Date(dataStart.getTime() + i * 86400000);
-    const activi = echipa.filter(m => !inCO(d, m) && !inAbsenta(d, m, 'any'));
+    const activi = echipa.filter(m => !eAbsent(m, d));
     if (activi.length >= 4) { dataPlecareSup = d; break; }
   }
-  if (!dataPlecareSup) return null; // criza dureaza >90 zile, nu generam
-
-  // Angajatii activi la data startului (care nu sunt in CO/CM)
-  const activiIds = echipa.filter(m => !inCO(dataStart, m) && !inAbsenta(dataStart, m, 'any')).map(m => m.id);
+  if (!dataPlecareSup) return null;
 
   // Perioadele: faza criza (cu SUP) + faza recuperare (fara SUP, cu 4+ activi)
   // Determinam data de sfarsit a recuperarii (cand revine al 2-lea angajat sau 14 zile max dupa plecare sup)
@@ -388,7 +397,7 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string): PlanCriza 
 
     const cuSuplinitor = d < dataPlecareSup;
     const activiAzi = echipa
-      .filter(m => !inCO(d, m) && !inAbsenta(d, m, 'any'))
+      .filter(m => !eAbsent(m, d))
       .map(m => m.id);
 
     const toatiIds: (number | 'SUP')[] = [...activiAzi, ...(cuSuplinitor ? ['SUP' as const] : [])];
@@ -2164,15 +2173,16 @@ export default function RotaFlow() {
                         <button onClick={()=>{
                           // Luam data primei probleme detectate ca start al planului de criza
                           const primaProblema = simIssues[0]?.data ?? simStart;
-                          confirmaAdaugareSimCuProbleme(true); // adaugam concediul si suplinitorul
-                          // Inchidem simularea si deschidem planul de criza
-                          setTimeout(() => {
-                            setPlanCrizaStart(primaProblema);
-                            const p = genereazaPlanCriza(echipa, primaProblema);
-                            setPlanCriza(p);
-                            setShowSimulare(false);
-                            setShowPlanCriza(true);
-                          }, 300);
+                          // NU confirmam adaugarea — planul de criza e alternativa, nu suplimentul
+                          // Inchidem simularea si deschidem planul de criza cu concediile simulate ca context
+                          const concediiPendingComplet = simPendingPayload
+                            ? [...simConcedii, simPendingPayload]
+                            : simConcedii;
+                          setPlanCrizaStart(primaProblema);
+                          const p = genereazaPlanCriza(echipa, primaProblema, concediiPendingComplet);
+                          setPlanCriza(p);
+                          setShowSimulare(false);
+                          setShowPlanCriza(true);
                         }} className="w-full bg-orange-900/40 border border-orange-500/40 text-orange-200 font-semibold text-[12px] py-2.5 rounded-lg hover:bg-orange-800/50 transition-all flex items-center justify-center gap-2">
                           <AlertTriangle size={13}/> Creează Plan Urgență cu Suplinitor
                         </button>
