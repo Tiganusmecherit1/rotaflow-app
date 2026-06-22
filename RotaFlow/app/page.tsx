@@ -259,6 +259,18 @@ function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActi
   if (!isSup && inAbsenta(d, m, 'CM')) return { type: 'CM', label: 'CM' };
   if (!isSup && inAbsenta(d, m, 'AN')) return { type: 'AN', label: 'AN' };
   if (!isSup && inCO(d, m)) return { type: 'CO', label: 'CO' };
+
+  // Suplinitorul lucreaza 6 zile/sapt (5D + 1S + 1L) = 48h legal exact.
+  // Pattern saptamanal: D,D,D,D,D,S,L — S e urmata de L, deci niciodata S->D direct.
+  // Calculam de la inceputul saptamanii calendaristice (Luni=0) ca sa fie consistent.
+  if (isSup && suplinitorActiv) {
+    const wd = d.getDay(); // 0=Du,1=Lu...6=Sa
+    const idx = wd === 0 ? 6 : wd - 1; // Lu=0, Ma=1, ... Du=6
+    const pattern = ['D','D','D','D','D','S','L']; // Lu-Vi=D, Sa=S, Du=L
+    const t = pattern[idx];
+    return { type: t, label: t };
+  }
+
   const activi = toataEchipa.filter(a => !inCO(d,a) && !inAbsenta(d,a,'any'));
   if (suplinitorActiv) activi.push(SUPLINITOR_OBJ);
   const poz = activi.findIndex(a => a.id === m.id);
