@@ -335,6 +335,125 @@ function getTuraSim(d: Date, m: Angajat, toataEchipa: Angajat[], simConcedii: Si
 
 // Analiza de conformitate pentru un interval — verifica nr minim activi si ore maxime saptamanale
 interface ConformitateIssue { tip: 'PUTINI_OAMENI' | 'ORE_MAXIME'; data: string; detalii: string }
+
+// ─── Plan de Criza ───
+interface PlanCrizaZi {
+  data: string; // YYYY-MM-DD
+  ture: Record<number | 'SUP', 'D' | 'S' | 'L'>;
+  cuSuplinitor: boolean;
+}
+interface PlanCriza {
+  dataStart: string;
+  dataPlecareSup: string; // prima zi fara suplinitor
+  zileTotal: number;
+  zileCuSup: number;
+  plan: PlanCrizaZi[];
+}
+
+function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string): PlanCriza | null {
+  const dataStart = parseD(dataStartStr);
+
+  // Gasim prima zi cand 4+ angajati sunt activi (suplinitorul poate pleca)
+  let dataPlecareSup: Date | null = null;
+  for (let i = 0; i < 90; i++) {
+    const d = new Date(dataStart.getTime() + i * 86400000);
+    const activi = echipa.filter(m => !inCO(d, m) && !inAbsenta(d, m, 'any'));
+    if (activi.length >= 4) { dataPlecareSup = d; break; }
+  }
+  if (!dataPlecareSup) return null; // criza dureaza >90 zile, nu generam
+
+  // Angajatii activi la data startului (care nu sunt in CO/CM)
+  const activiIds = echipa.filter(m => !inCO(dataStart, m) && !inAbsenta(dataStart, m, 'any')).map(m => m.id);
+
+  // Perioadele: faza criza (cu SUP) + faza recuperare (fara SUP, cu 4+ activi)
+  // Determinam data de sfarsit a recuperarii (cand revine al 2-lea angajat sau 14 zile max dupa plecare sup)
+  const dataEndRecuperare = new Date(dataPlecareSup.getTime() + 14 * 86400000);
+
+  const plan: PlanCrizaZi[] = [];
+  const turaAnterioara: Partial<Record<number | 'SUP', string>> = {};
+  const oreSapt: Partial<Record<number | 'SUP', number>> = {};
+  let saptamanaLuni: string | null = null;
+
+  for (let i = 0; ; i++) {
+    const d = new Date(dataStart.getTime() + i * 86400000);
+    if (d > dataEndRecuperare) break;
+
+    // Reset ore la inceput de saptamana calendaristica (Luni)
+    const lu = getMonday(d);
+    const luStr = fmtDateInput(lu);
+    if (luStr !== saptamanaLuni) {
+      saptamanaLuni = luStr;
+      Object.keys(oreSapt).forEach(k => (oreSapt as Record<string, number>)[k] = 0);
+    }
+
+    const cuSuplinitor = d < dataPlecareSup;
+    const activiAzi = echipa
+      .filter(m => !inCO(d, m) && !inAbsenta(d, m, 'any'))
+      .map(m => m.id);
+
+    const toatiIds: (number | 'SUP')[] = [...activiAzi, ...(cuSuplinitor ? ['SUP' as const] : [])];
+
+    // Initializare
+    toatiIds.forEach(aid => {
+      if (oreSapt[aid] === undefined) oreSapt[aid] = 0;
+      if (turaAnterioara[aid] === undefined) turaAnterioara[aid] = 'L';
+    });
+
+    const ture: Record<number | 'SUP', 'D' | 'S' | 'L'> = {} as Record<number | 'SUP', 'D' | 'S' | 'L'>;
+
+    // Suplinitorul: preferam D, respectam 48h si regula S->D
+    if (cuSuplinitor) {
+      if (turaAnterioara['SUP'] !== 'S' && (oreSapt['SUP'] || 0) + 8 <= 48) {
+        ture['SUP'] = 'D';
+      } else if ((oreSapt['SUP'] || 0) + 8 <= 48) {
+        ture['SUP'] = 'S';
+      } else {
+        ture['SUP'] = 'L';
+      }
+    }
+
+    const turaSup = ture['SUP'] || 'L';
+    const nevoieD = 2 - (turaSup === 'D' ? 1 : 0);
+    const nevoieS = 1 - (turaSup === 'S' ? 1 : 0);
+
+    // Localii: sortam dupa ore lucrate (echitate), respectam S->D si 48h
+    const potD = activiAzi
+      .filter(a => turaAnterioara[a] !== 'S' && (oreSapt[a] || 0) + 8 <= 48)
+      .sort((a, b) => (oreSapt[a] || 0) - (oreSapt[b] || 0));
+    const alesiD = potD.slice(0, nevoieD);
+
+    const potS = activiAzi
+      .filter(a => !alesiD.includes(a) && (oreSapt[a] || 0) + 8 <= 48)
+      .sort((a, b) => (oreSapt[a] || 0) - (oreSapt[b] || 0));
+    const alesiS = potS.slice(0, nevoieS);
+
+    activiAzi.forEach(a => {
+      ture[a] = alesiD.includes(a) ? 'D' : alesiS.includes(a) ? 'S' : 'L';
+    });
+
+    // Angajatii in CO/CM apar L
+    echipa.forEach(m => {
+      if (!(m.id in ture)) ture[m.id] = 'L';
+    });
+
+    plan.push({ data: fmtDateInput(d), ture, cuSuplinitor });
+
+    // Actualizam starea
+    toatiIds.forEach(aid => {
+      const t = ture[aid] || 'L';
+      turaAnterioara[aid] = t;
+      if (t === 'D' || t === 'S') oreSapt[aid] = (oreSapt[aid] || 0) + 8;
+    });
+  }
+
+  return {
+    dataStart: dataStartStr,
+    dataPlecareSup: fmtDateInput(dataPlecareSup),
+    zileTotal: plan.length,
+    zileCuSup: plan.filter(p => p.cuSuplinitor).length,
+    plan,
+  };
+}
 function analizeazaConformitate(echipa: Angajat[], simConcedii: SimConcediu[], suplinitorActiv: boolean, startCheck: Date, zileCheck: number, pragMinimActivi = 3, pragOreMax = 48): ConformitateIssue[] {
   const issues: ConformitateIssue[] = [];
   const zileSet = new Set<string>();
@@ -426,6 +545,8 @@ export default function RotaFlow() {
   const [activeTab, setActiveTab] = useState<'rota'|'luna'|'stats'|'swap'|'log'>('rota');
   const [showCO, setShowCO] = useState(false);
   const [showUrgente, setShowUrgente] = useState(false);
+  const [showPlanCriza, setShowPlanCriza] = useState(false);
+  const [planCriza, setPlanCriza] = useState<PlanCriza | null>(null);
   const [editIdx, setEditIdx] = useState<number|null>(null);
   const [tempNume, setTempNume] = useState('');
   const [urgTip, setUrgTip] = useState<'CM'|'AN'>('CM');
@@ -1096,6 +1217,10 @@ export default function RotaFlow() {
             <button onClick={()=>setShowSimulare(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-900/40 border border-purple-500/30 text-purple-300 text-[12px] font-semibold hover:bg-purple-800/50 transition-all">
               <FlaskConical size={13}/> Simulare Concedii
             </button>
+            <button onClick={()=>{ const p=genereazaPlanCriza(echipa,fmtDateInput(new Date())); setPlanCriza(p); setShowPlanCriza(true); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 border border-red-500/30 text-red-300 text-[12px] font-semibold hover:bg-red-800/50 transition-all">
+              <AlertTriangle size={13}/> Plan Criză
+            </button>
           </div>
         </div>
 
@@ -1729,6 +1854,112 @@ export default function RotaFlow() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Modal Plan Criză ── */}
+        {showPlanCriza && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={()=>setShowPlanCriza(false)}>
+            <div className="bg-[#1c1c1e] border border-white/[0.09] rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl" onClick={e=>e.stopPropagation()}>
+              <div className="px-6 py-4 border-b border-white/[0.07] flex items-center justify-between sticky top-0 bg-[#1c1c1e] z-10">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={16} className="text-red-400"/>
+                  <span className="font-bold text-[14px]">Plan de Criză — Distribuire Optimă</span>
+                </div>
+                <button onClick={()=>setShowPlanCriza(false)} className="w-7 h-7 flex items-center justify-center bg-white/[0.07] hover:bg-white/10 text-zinc-400 rounded-md"><X size={14}/></button>
+              </div>
+
+              <div className="p-6 space-y-5">
+                {!planCriza ? (
+                  <div className="text-center py-8">
+                    <p className="text-emerald-400 font-semibold text-[14px] mb-2">Echipa e la capacitate normală!</p>
+                    <p className="text-zinc-500 text-[12px]">Nu există devieri active — toți angajații sunt disponibili. Planul de criză e necesar doar când rămân sub 4 angajați activi.</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Rezumat */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="bg-red-950/30 border border-red-500/20 rounded-xl p-3 text-center">
+                        <p className="text-[20px] font-black text-red-400">{planCriza.zileCuSup}</p>
+                        <p className="text-[10px] text-zinc-500">zile cu suplinitor</p>
+                      </div>
+                      <div className="bg-[#2c2c2e] border border-white/[0.07] rounded-xl p-3 text-center">
+                        <p className="text-[20px] font-black text-amber-400">{planCriza.zileTotal - planCriza.zileCuSup}</p>
+                        <p className="text-[10px] text-zinc-500">zile recuperare (fără sup.)</p>
+                      </div>
+                      <div className="bg-emerald-950/30 border border-emerald-500/20 rounded-xl p-3 text-center">
+                        <p className="text-[13px] font-bold text-emerald-400">{planCriza.dataPlecareSup}</p>
+                        <p className="text-[10px] text-zinc-500">suplinitorul pleacă</p>
+                      </div>
+                    </div>
+
+                    <p className="text-[10px] text-zinc-600">
+                      Distribuție optimă: suplinitorul lucrează zilnic până când primul angajat revine din CO/CM (4 activi = legal fără suplinitor). Localii sunt distribuiți echitabil — cel cu mai puține ore are prioritate. Regula S→D interzisă respectată.
+                    </p>
+
+                    {/* Tabel plan zilnic */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[11px]">
+                        <thead>
+                          <tr className="text-zinc-500 border-b border-white/[0.07]">
+                            <th className="text-left py-2 font-medium">Data</th>
+                            {echipa.map(m=>(
+                              <th key={m.id} className="text-center py-2 font-medium">{m.nume.split(' ')[0]}</th>
+                            ))}
+                            <th className="text-center py-2 font-medium text-red-400">SUP</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {planCriza.plan.map((zi, idx) => {
+                            const d = parseD(zi.data);
+                            const isWeekend = d.getDay()===0||d.getDay()===6;
+                            return (
+                              <tr key={idx} className={`border-b border-white/[0.03] ${isWeekend?'bg-white/[0.01]':''} ${!zi.cuSuplinitor?'opacity-70':''}`}>
+                                <td className="py-1.5 text-zinc-400">
+                                  {fmtDate(d)}
+                                  <span className="ml-1 text-[9px] text-zinc-600">{['Du','Lu','Ma','Mi','Jo','Vi','Sâ'][d.getDay()]}</span>
+                                  {!zi.cuSuplinitor && <span className="ml-1 text-[9px] text-emerald-600">fără sup.</span>}
+                                </td>
+                                {echipa.map(m=>{
+                                  const t = zi.ture[m.id] || 'L';
+                                  return (
+                                    <td key={m.id} className="text-center py-1.5">
+                                      <span className={`inline-block w-6 h-6 rounded text-[10px] font-bold leading-6 ${t==='D'?'bg-blue-900/50 text-blue-300':t==='S'?'bg-purple-900/50 text-purple-300':'text-zinc-700'}`}>
+                                        {t}
+                                      </span>
+                                    </td>
+                                  );
+                                })}
+                                <td className="text-center py-1.5">
+                                  {zi.cuSuplinitor ? (
+                                    <span className={`inline-block w-6 h-6 rounded text-[10px] font-bold leading-6 ${zi.ture['SUP']==='D'?'bg-red-900/50 text-red-300':'bg-orange-900/50 text-orange-300'}`}>
+                                      {zi.ture['SUP']}
+                                    </span>
+                                  ) : (
+                                    <span className="text-zinc-700 text-[10px]">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="flex gap-2 pt-2">
+                      <button onClick={()=>{ const p=genereazaPlanCriza(echipa,fmtDateInput(new Date())); setPlanCriza(p); }}
+                        className="flex-1 bg-[#2c2c2e] border border-white/[0.07] text-zinc-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-white/[0.05] transition-all">
+                        🔄 Regenerează plan
+                      </button>
+                      <button onClick={()=>setShowPlanCriza(false)}
+                        className="flex-1 bg-emerald-900/30 border border-emerald-500/30 text-emerald-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-emerald-900/50 transition-all">
+                        ✓ Am înțeles, închide
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
