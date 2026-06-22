@@ -316,11 +316,13 @@ function inSimConcediu(d: Date, angajatId: number, simConcedii: SimConcediu[]): 
   });
 }
 
-// Tura pentru simulare — foloseste simConcedii in loc de m.concedii, ignora CM/AN reale
+// Tura pentru simulare — combina concediile simulate cu CO/CM/AN reale
 function getTuraSim(d: Date, m: Angajat, toataEchipa: Angajat[], simConcedii: SimConcediu[], suplinitorActiv: boolean): { type: string; label: string } {
   const isSup = m.id === 999;
-  if (!isSup && inSimConcediu(d, m.id, simConcedii)) return { type: 'CO', label: 'CO' };
-  const activi = toataEchipa.filter(a => !inSimConcediu(d, a.id, simConcedii));
+  // Angajatul e absent daca e in concediu simulat SAU in CO/CM/AN real
+  const eAbsentSim = (a: Angajat) => inSimConcediu(d, a.id, simConcedii) || inCO(d, a) || inAbsenta(d, a, 'any');
+  if (!isSup && eAbsentSim(m)) return { type: 'CO', label: 'CO' };
+  const activi = toataEchipa.filter(a => !eAbsentSim(a));
   if (suplinitorActiv) activi.push(SUPLINITOR_OBJ);
   const poz = activi.findIndex(a => a.id === m.id);
   if (poz === -1) return { type: 'L', label: 'L' };
@@ -492,7 +494,8 @@ function analizeazaConformitate(echipa: Angajat[], simConcedii: SimConcediu[], s
 
   for (let i = 0; i < zileCheck; i++) {
     const d = new Date(startCheck.getTime() + i * 86400000);
-    const activi = echipa.filter(a => !inSimConcediu(d, a.id, simConcedii));
+    // Excludem angajatii in concediu simulat SAU in CO/CM/AN real
+    const activi = echipa.filter(a => !inSimConcediu(d, a.id, simConcedii) && !inCO(d, a) && !inAbsenta(d, a, 'any'));
     const totalActivi = activi.length + (suplinitorActiv ? 1 : 0);
     if (totalActivi < pragMinimActivi) {
       const key = fmtDateInput(d);
