@@ -1265,17 +1265,35 @@ export default function RotaFlow() {
 
           {/* Alerta personal insuficient */}
           {alertePersonalInsuficient.length > 0 && (
-            <div className={`border rounded-xl p-3 flex items-center gap-3 no-print ${alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor)?'bg-red-950/50 border-red-500/50':'bg-amber-950/40 border-amber-500/40'}`}>
-              <AlertTriangle className={alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor)?'text-red-400 flex-shrink-0':'text-amber-400 flex-shrink-0'} size={16}/>
-              <p className={alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor)?'text-red-300 text-[12px]':'text-amber-300 text-[12px]'}>
-                <span className="font-bold">
-                  {alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor) ? 'CRITIC — chiar și cu Suplinitorul activ:' : 'Personal insuficient:'}
-                </span>{' '}
-                {alertePersonalInsuficient.map(a=>`${fmtDate(a.zi)} (${a.totalActivi} activi)`).join(', ')} — minim recomandat 3 angajați activi.
-                {alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor)
-                  ? ' Un singur Suplinitor nu este suficient — e nevoie de intervenție manuală (rechemare din concediu sau personal suplimentar).'
-                  : ' Verifică Simulare Concedii sau activează Suplinitorul.'}
-              </p>
+            <div className={`border rounded-xl p-4 no-print ${alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor)?'bg-red-950/50 border-red-500/50':'bg-amber-950/40 border-amber-500/40'}`}>
+              <div className="flex items-start gap-3">
+                <AlertTriangle className={alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor)?'text-red-400 flex-shrink-0 mt-0.5':'text-amber-400 flex-shrink-0 mt-0.5'} size={16}/>
+                <div className="flex-1 min-w-0">
+                  <p className={alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor)?'text-red-300 text-[12px]':'text-amber-300 text-[12px]'}>
+                    <span className="font-bold">
+                      {alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor) ? 'CRITIC — chiar și cu Suplinitorul activ:' : 'Personal insuficient:'}
+                    </span>{' '}
+                    {alertePersonalInsuficient.map(a=>`${fmtDate(a.zi)} (${a.totalActivi} activi)`).join(', ')} — minim recomandat 3 angajați activi.
+                  </p>
+                  <button
+                    onClick={()=>{
+                      // Folosim prima zi cu problema ca data de start a planului de criza
+                      const primaZiCriza = fmtDateInput(alertePersonalInsuficient[0].zi);
+                      setPlanCrizaStart(primaZiCriza);
+                      const p = genereazaPlanCriza(echipa, primaZiCriza);
+                      setPlanCriza(p);
+                      setShowPlanCriza(true);
+                    }}
+                    className={`mt-2.5 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${
+                      alertePersonalInsuficient.some(a=>a.criticChiarCuSuplinitor)
+                        ? 'bg-red-900/50 border border-red-500/40 text-red-200 hover:bg-red-800/60'
+                        : 'bg-amber-900/50 border border-amber-500/40 text-amber-200 hover:bg-amber-800/60'
+                    }`}>
+                    <AlertTriangle size={11}/>
+                    Generează Plan de Criză automat →
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
