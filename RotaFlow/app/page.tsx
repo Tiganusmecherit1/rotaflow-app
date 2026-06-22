@@ -350,13 +350,12 @@ interface PlanCriza {
   plan: PlanCrizaZi[];
 }
 
-function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim: SimConcediu[] = []): PlanCriza | null {
+function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim: SimConcediu[] = [], simIssues: ConformitateIssue[] = []): PlanCriza | null {
   const dataStart = parseD(dataStartStr);
 
   // Verifica daca un angajat e absent (CO real SAU CO simulat)
   const eAbsent = (m: Angajat, d: Date) => {
     if (inCO(d, m) || inAbsenta(d, m, 'any')) return true;
-    // Include si concediile simulate care nu sunt inca in calendarul real
     return concediiSim.some(sc => {
       if (sc.angajatId !== m.id) return false;
       const s = parseD(sc.start);
@@ -365,13 +364,37 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
     });
   };
 
-  // Gasim prima zi cand 4+ angajati sunt activi (suplinitorul poate pleca)
+  // Determinam data plecarii suplinitorului in functie de tipul problemei:
+  // - PUTINI_OAMENI: suplinitorul pleaca cand revin suficienti angajati (4+ activi)
+  // - ORE_MAXIME: suplinitorul pleaca la sfarsitul perioadei cu depasiri de ore
   let dataPlecareSup: Date | null = null;
-  for (let i = 0; i < 90; i++) {
-    const d = new Date(dataStart.getTime() + i * 86400000);
-    const activi = echipa.filter(m => !eAbsent(m, d));
-    if (activi.length >= 4) { dataPlecareSup = d; break; }
+
+  const areProblemeOre = simIssues.some(i => i.tip === 'ORE_MAXIME');
+  const areProblemePutini = simIssues.some(i => i.tip === 'PUTINI_OAMENI');
+
+  if (areProblemeOre && !areProblemePutini) {
+    // Luam ultima zi cu probleme de ore din simIssues, suplinitorul pleaca a doua zi
+    const dateProbleme = simIssues
+      .filter(i => i.tip === 'ORE_MAXIME')
+      .map(i => parseD(i.data))
+      .sort((a,b) => b.getTime() - a.getTime());
+    if (dateProbleme.length > 0) {
+      // Sfarsitul saptamanii cu probleme (Duminica saptamanii celei mai tardive)
+      const ultimaSapt = dateProbleme[0];
+      const duminicaSapt = new Date(ultimaSapt.getTime() + (7 - ultimaSapt.getDay()) * 86400000);
+      dataPlecareSup = new Date(duminicaSapt.getTime() + 86400000); // Luni dupa ultima saptamana cu probleme
+    }
   }
+
+  if (!dataPlecareSup) {
+    // PUTINI_OAMENI sau fallback: suplinitorul pleaca cand revin 4+ activi
+    for (let i = 0; i < 90; i++) {
+      const d = new Date(dataStart.getTime() + i * 86400000);
+      const activi = echipa.filter(m => !eAbsent(m, d));
+      if (activi.length >= 4) { dataPlecareSup = d; break; }
+    }
+  }
+
   if (!dataPlecareSup) return null;
 
   // Perioadele: faza criza (cu SUP) + faza recuperare (fara SUP, cu 4+ activi)
@@ -2173,13 +2196,11 @@ export default function RotaFlow() {
                         <button onClick={()=>{
                           // Luam data primei probleme detectate ca start al planului de criza
                           const primaProblema = simIssues[0]?.data ?? simStart;
-                          // NU confirmam adaugarea — planul de criza e alternativa, nu suplimentul
-                          // Inchidem simularea si deschidem planul de criza cu concediile simulate ca context
                           const concediiPendingComplet = simPendingPayload
                             ? [...simConcedii, simPendingPayload]
                             : simConcedii;
                           setPlanCrizaStart(primaProblema);
-                          const p = genereazaPlanCriza(echipa, primaProblema, concediiPendingComplet);
+                          const p = genereazaPlanCriza(echipa, primaProblema, concediiPendingComplet, simIssues);
                           setPlanCriza(p);
                           setShowSimulare(false);
                           setShowPlanCriza(true);
