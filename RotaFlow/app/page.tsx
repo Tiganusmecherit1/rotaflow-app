@@ -547,6 +547,7 @@ export default function RotaFlow() {
   const [showUrgente, setShowUrgente] = useState(false);
   const [showPlanCriza, setShowPlanCriza] = useState(false);
   const [planCriza, setPlanCriza] = useState<PlanCriza | null>(null);
+  const [planCrizaStart, setPlanCrizaStart] = useState(fmtDateInput(new Date()));
   const [editIdx, setEditIdx] = useState<number|null>(null);
   const [tempNume, setTempNume] = useState('');
   const [urgTip, setUrgTip] = useState<'CM'|'AN'>('CM');
@@ -1217,7 +1218,7 @@ export default function RotaFlow() {
             <button onClick={()=>setShowSimulare(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-900/40 border border-purple-500/30 text-purple-300 text-[12px] font-semibold hover:bg-purple-800/50 transition-all">
               <FlaskConical size={13}/> Simulare Concedii
             </button>
-            <button onClick={()=>{ const p=genereazaPlanCriza(echipa,fmtDateInput(new Date())); setPlanCriza(p); setShowPlanCriza(true); }}
+            <button onClick={()=>{ setShowPlanCriza(true); }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 border border-red-500/30 text-red-300 text-[12px] font-semibold hover:bg-red-800/50 transition-all">
               <AlertTriangle size={13}/> Plan Criză
             </button>
@@ -1871,6 +1872,20 @@ export default function RotaFlow() {
                 <button onClick={()=>setShowPlanCriza(false)} className="w-7 h-7 flex items-center justify-center bg-white/[0.07] hover:bg-white/10 text-zinc-400 rounded-md"><X size={14}/></button>
               </div>
 
+              {/* Selector dată start */}
+              <div className="px-6 py-4 border-b border-white/[0.07] flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <label className="text-[11px] text-zinc-400 whitespace-nowrap font-semibold">Data de start a crizei:</label>
+                  <input type="date" value={planCrizaStart}
+                    onChange={e => { setPlanCrizaStart(e.target.value); setPlanCriza(null); }}
+                    className="bg-black/40 border border-white/[0.08] rounded-lg px-3 py-1.5 text-[12px] text-white outline-none focus:border-red-500/50 transition-all"/>
+                </div>
+                <button onClick={()=>{ const p=genereazaPlanCriza(echipa, planCrizaStart); setPlanCriza(p); }}
+                  className="bg-red-900/40 border border-red-500/30 text-red-300 text-[12px] font-semibold px-4 py-1.5 rounded-lg hover:bg-red-800/50 transition-all flex items-center gap-1.5">
+                  <AlertTriangle size={12}/> Generează plan
+                </button>
+              </div>
+
               <div className="p-6 space-y-5">
                 {!planCriza ? (
                   <div className="text-center py-8">
@@ -1949,7 +1964,7 @@ export default function RotaFlow() {
                     </div>
 
                     <div className="flex gap-2 pt-2">
-                      <button onClick={()=>{ const p=genereazaPlanCriza(echipa,fmtDateInput(new Date())); setPlanCriza(p); }}
+                      <button onClick={()=>{ const p=genereazaPlanCriza(echipa, planCrizaStart); setPlanCriza(p); }}
                         className="flex-1 bg-[#2c2c2e] border border-white/[0.07] text-zinc-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-white/[0.05] transition-all">
                         🔄 Regenerează plan
                       </button>
