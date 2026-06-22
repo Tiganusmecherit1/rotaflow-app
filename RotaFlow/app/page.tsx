@@ -2151,7 +2151,7 @@ export default function RotaFlow() {
                     </div>
                     <div className="border-t border-red-500/20 pt-3">
                       <p className="text-[12px] text-white font-semibold mb-2">Continui oricum?</p>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <button onClick={anuleazaAdaugareSim} className="flex-1 bg-zinc-800 border border-zinc-600 text-zinc-300 font-semibold text-[12px] py-2 rounded-lg hover:bg-zinc-700 transition-all">
                           Nu, renunț
                         </button>
@@ -2160,6 +2160,21 @@ export default function RotaFlow() {
                         </button>
                         <button onClick={()=>confirmaAdaugareSimCuProbleme(true)} className="flex-1 bg-emerald-900/40 border border-emerald-500/40 text-emerald-300 font-semibold text-[12px] py-2 rounded-lg hover:bg-emerald-900/60 transition-all flex items-center justify-center gap-1.5">
                           <Plus size={13}/> Da, adaugă suplinitor
+                        </button>
+                        <button onClick={()=>{
+                          // Luam data primei probleme detectate ca start al planului de criza
+                          const primaProblema = simIssues[0]?.data ?? simStart;
+                          confirmaAdaugareSimCuProbleme(true); // adaugam concediul si suplinitorul
+                          // Inchidem simularea si deschidem planul de criza
+                          setTimeout(() => {
+                            setPlanCrizaStart(primaProblema);
+                            const p = genereazaPlanCriza(echipa, primaProblema);
+                            setPlanCriza(p);
+                            setShowSimulare(false);
+                            setShowPlanCriza(true);
+                          }, 300);
+                        }} className="w-full bg-orange-900/40 border border-orange-500/40 text-orange-200 font-semibold text-[12px] py-2.5 rounded-lg hover:bg-orange-800/50 transition-all flex items-center justify-center gap-2">
+                          <AlertTriangle size={13}/> Creează Plan Urgență cu Suplinitor
                         </button>
                       </div>
                     </div>
