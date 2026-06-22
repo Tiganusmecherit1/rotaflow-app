@@ -9,26 +9,29 @@ const SARBATORI = SARBATORI_RAW.map(d => new Date(d + 'T00:00:00'));
 const isSarbatoare = (d: Date) => SARBATORI.some(s => s.toDateString() === d.toDateString());
 const parseD = (s: string) => new Date(s + 'T00:00:00');
 
+// Sloturi de concediu — conform art. 145 Codul Muncii, concediul se calculeaza in zile LUCRATOARE.
+// Fiecare slot acopera Luni-Vineri (5 zile lucratoare). Sambata si Duminica din acelasi interval
+// sunt marcate CO in calendar (absent fizic) dar NU se scad din zilele de CO ramase.
 const SLOTS: Record<string, { n: string; s: string; e: string }[]> = {
   'Primăvară': [
-    { n: '06–11 Apr', s: '2026-04-06', e: '2026-04-11' },{ n: '13–18 Apr', s: '2026-04-13', e: '2026-04-18' },
-    { n: '20–25 Apr', s: '2026-04-20', e: '2026-04-25' },{ n: '27 Apr–02 Mai', s: '2026-04-27', e: '2026-05-02' },
-    { n: '04–09 Mai', s: '2026-05-04', e: '2026-05-09' },
+    { n: '06–10 Apr', s: '2026-04-06', e: '2026-04-10' },{ n: '13–17 Apr', s: '2026-04-13', e: '2026-04-17' },
+    { n: '20–24 Apr', s: '2026-04-20', e: '2026-04-24' },{ n: '27 Apr–01 Mai', s: '2026-04-27', e: '2026-05-01' },
+    { n: '04–08 Mai', s: '2026-05-04', e: '2026-05-08' },
   ],
   'Vară': [
-    { n: '06–11 Iul', s: '2026-07-06', e: '2026-07-11' },{ n: '13–18 Iul', s: '2026-07-13', e: '2026-07-18' },
-    { n: '20–25 Iul', s: '2026-07-20', e: '2026-07-25' },{ n: '27 Iul–01 Aug', s: '2026-07-27', e: '2026-08-01' },
-    { n: '03–08 Aug', s: '2026-08-03', e: '2026-08-08' },
+    { n: '06–10 Iul', s: '2026-07-06', e: '2026-07-10' },{ n: '13–17 Iul', s: '2026-07-13', e: '2026-07-17' },
+    { n: '20–24 Iul', s: '2026-07-20', e: '2026-07-24' },{ n: '27–31 Iul', s: '2026-07-27', e: '2026-07-31' },
+    { n: '03–07 Aug', s: '2026-08-03', e: '2026-08-07' },
   ],
   'Toamnă': [
-    { n: '05–10 Oct', s: '2026-10-05', e: '2026-10-10' },{ n: '12–17 Oct', s: '2026-10-12', e: '2026-10-17' },
-    { n: '19–24 Oct', s: '2026-10-19', e: '2026-10-24' },{ n: '26–31 Oct', s: '2026-10-26', e: '2026-10-31' },
-    { n: '02–07 Noi', s: '2026-11-02', e: '2026-11-07' },
+    { n: '05–09 Oct', s: '2026-10-05', e: '2026-10-09' },{ n: '12–16 Oct', s: '2026-10-12', e: '2026-10-16' },
+    { n: '19–23 Oct', s: '2026-10-19', e: '2026-10-23' },{ n: '26–30 Oct', s: '2026-10-26', e: '2026-10-30' },
+    { n: '02–06 Noi', s: '2026-11-02', e: '2026-11-06' },
   ],
   'Iarnă': [
-    { n: '07–12 Dec', s: '2026-12-07', e: '2026-12-12' },{ n: '14–19 Dec', s: '2026-12-14', e: '2026-12-19' },
-    { n: '21–26 Dec', s: '2026-12-21', e: '2026-12-26' },{ n: '28 Dec–02 Ian', s: '2026-12-28', e: '2027-01-02' },
-    { n: '04–09 Ian 27', s: '2027-01-04', e: '2027-01-09' },
+    { n: '07–11 Dec', s: '2026-12-07', e: '2026-12-11' },{ n: '14–18 Dec', s: '2026-12-14', e: '2026-12-18' },
+    { n: '21–25 Dec', s: '2026-12-21', e: '2026-12-25' },{ n: '28 Dec–01 Ian', s: '2026-12-28', e: '2027-01-01' },
+    { n: '04–08 Ian 27', s: '2027-01-04', e: '2027-01-08' },
   ],
 };
 
@@ -186,16 +189,38 @@ function inCO(d: Date, m: Angajat): boolean {
   // Verificare directa - data e in interiorul unui concediu existent
   if (m.concedii.some(c => { const s=parseD(c.s),e=parseD(c.e); e.setHours(23,59,59); return d>=s&&d<=e; })) return true;
 
+  // Extindere weekend — conform art. 145 Codul Muncii, concediul se calculeaza in zile lucratoare.
+  // Daca data e Sambata sau Duminica si exista un concediu care se termina in Vinerea precedenta
+  // (sau mai tarziu in aceeasi saptamana), angajatul e absent fizic si in acea zi, fara cost CO.
+  const wd = d.getDay(); // 0=Du, 6=Sa
+  if (wd === 0 || wd === 6) {
+    // Gasim Vinerea anterioara acestei Sambate/Duminici
+    const daysToFriday = wd === 6 ? 1 : 2; // Sa -> 1 zi inapoi, Du -> 2 zile inapoi
+    const vineriPrecedenta = new Date(d.getTime() - daysToFriday * 86400000);
+    vineriPrecedenta.setHours(0,0,0,0);
+    // Daca exista un concediu care acoperea Vinerea precedenta, atunci si Sambata/Duminica sunt CO fizic
+    if (m.concedii.some(c => {
+      const s=parseD(c.s), e=parseD(c.e); e.setHours(23,59,59);
+      return vineriPrecedenta>=s && vineriPrecedenta<=e;
+    })) return true;
+  }
+
   // Verificare "punte" - daca data e exact 1 zi intre sfarsitul unui concediu si inceputul altuia
-  // (sloturi adiacente, ex: 06-11 Apr + 13-18 Apr -> 12 Apr e tratat ca CO, fara cost suplimentar)
+  // (sloturi adiacente, ex: 06-10 Apr + 13-17 Apr -> 11-12 Apr tratat ca CO, fara cost suplimentar)
   return m.concedii.some(c1 => m.concedii.some(c2 => {
     if (c1 === c2) return false;
     const e1 = parseD(c1.e);
     const s2 = parseD(c2.s);
     const gapStart = new Date(e1.getTime() + 86400000);
     const gapEnd = new Date(s2.getTime() - 86400000);
-    if (gapStart.getTime() !== gapEnd.getTime()) return false; // gap trebuie sa fie exact 1 zi
-    return d.toDateString() === gapStart.toDateString();
+    if (gapStart.getTime() > gapEnd.getTime()) return false;
+    // gap poate fi 1-2 zile (Sambata+Duminica intre 2 sloturi consecutive)
+    let check = new Date(gapStart); 
+    while (check <= gapEnd) {
+      if (check.toDateString() === d.toDateString()) return true;
+      check = new Date(check.getTime() + 86400000);
+    }
+    return false;
   }));
 }
 function inAbsenta(d: Date, m: Angajat, tip: 'CM'|'AN'|'any'): boolean {
@@ -1814,7 +1839,23 @@ export default function RotaFlow() {
                         className="w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-purple-500/50"/>
                     </div>
                     <div>
-                      <label className="text-[10px] text-zinc-500 mb-1 block">Număr zile ({simZile})</label>
+                      <label className="text-[10px] text-zinc-500 mb-1 block">
+                        Număr zile calendaristice ({simZile})
+                        {(() => {
+                          // Calculeaza costul real in zile lucratoare din intervalul ales
+                          const s = parseD(simStart);
+                          const e = new Date(s.getTime() + (simZile - 1) * 86400000);
+                          let lucratoare = 0;
+                          for (let d = new Date(s); d <= e; d = new Date(d.getTime() + 86400000)) {
+                            if (d.getDay() > 0 && d.getDay() < 6 && !isSarbatoare(d)) lucratoare++;
+                          }
+                          return (
+                            <span className="ml-2 text-purple-400 font-bold">
+                              = {lucratoare} zile CO
+                            </span>
+                          );
+                        })()}
+                      </label>
                       <input type="range" min={1} max={31} value={simZile} onChange={e=>setSimZile(Number(e.target.value))} className="w-full accent-purple-500 mt-2.5"/>
                     </div>
                     <div className="flex items-end">
@@ -1823,7 +1864,7 @@ export default function RotaFlow() {
                       </button>
                     </div>
                   </div>
-                  <p className="text-[10px] text-zinc-600 mt-2">Perioada se calculează liber, de la 1 până la 31 de zile — fără restricția sloturilor fixe de 6 zile.</p>
+                  <p className="text-[10px] text-zinc-600 mt-2">Perioada se calculează liber în zile calendaristice (1–31). Zilele lucrătoare (Lu-Vi, fără sărbători) reprezintă costul real din CO — weekendurile din interval nu se scad.</p>
                 </div>
 
                 {/* ALERTĂ conformitate cu confirmare */}
@@ -1873,9 +1914,15 @@ export default function RotaFlow() {
                         const ang=echipa.find(m=>m.id===sc.angajatId);
                         const start=parseD(sc.start);
                         const end=new Date(start.getTime()+(sc.zile-1)*86400000);
+                        let lucratoare = 0;
+                        for (let d = new Date(start); d <= end; d = new Date(d.getTime()+86400000)) {
+                          if (d.getDay()>0 && d.getDay()<6 && !isSarbatoare(d)) lucratoare++;
+                        }
                         return (
                           <span key={sc.id} className="flex items-center gap-1.5 bg-purple-950/40 border border-purple-500/25 text-purple-300 text-[10px] px-2.5 py-1 rounded-full">
-                            <strong>{ang?.nume}</strong> {fmtDate(start)}–{fmtDate(end)} ({sc.zile}z)
+                            <strong>{ang?.nume}</strong> {fmtDate(start)}–{fmtDate(end)}
+                            <span className="text-purple-500">({sc.zile} cal</span>
+                            <span className="text-purple-300 font-bold">= {lucratoare} CO)</span>
                             <button onClick={()=>stergeSimConcediu(sc.id)} className="text-purple-500 hover:text-purple-200 ml-0.5 leading-none">×</button>
                           </span>
                         );
@@ -1933,6 +1980,37 @@ export default function RotaFlow() {
                 <p className="text-[11px] text-zinc-500">
                   {simConcedii.length === 0 ? 'Adaugă cel puțin un concediu de test pentru a vedea rezultatul.' : `${simConcedii.length} concedii pregătite${simSuplinitor?' · suplinitor inclus':''}.`}
                 </p>
+                {simConcedii.length > 0 && (
+                  <div className="bg-purple-950/20 border border-purple-500/20 rounded-xl px-4 py-3 text-[11px]">
+                    <p className="text-zinc-400 font-semibold mb-1.5">Rezumat cost simulare:</p>
+                    {echipa.map(m => {
+                      const concediiM = simConcedii.filter(sc => sc.angajatId === m.id);
+                      if (concediiM.length === 0) return null;
+                      const totalCal = concediiM.reduce((acc, sc) => acc + sc.zile, 0);
+                      let totalCO = 0;
+                      concediiM.forEach(sc => {
+                        const s = parseD(sc.start);
+                        const e = new Date(s.getTime() + (sc.zile - 1) * 86400000);
+                        for (let d = new Date(s); d <= e; d = new Date(d.getTime() + 86400000)) {
+                          if (d.getDay() > 0 && d.getDay() < 6 && !isSarbatoare(d)) totalCO++;
+                        }
+                      });
+                      const coRamas = m.zileCO - totalCO;
+                      return (
+                        <div key={m.id} className="flex items-center justify-between py-0.5">
+                          <span className="text-zinc-300">{m.nume}</span>
+                          <span>
+                            <span className="text-zinc-500">{totalCal} zile cal. → </span>
+                            <span className="text-purple-300 font-bold">{totalCO} zile CO</span>
+                            <span className={`ml-2 font-bold ${coRamas < 0 ? 'text-red-400' : 'text-zinc-400'}`}>
+                              ({coRamas < 0 ? `depășit cu ${Math.abs(coRamas)}!` : `${coRamas} rămase`})
+                            </span>
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <button onClick={()=>{reseteazaSimulare();setShowSimulare(false);}} className="bg-zinc-800 border border-zinc-600 text-zinc-300 font-semibold text-[12px] px-4 py-2 rounded-lg hover:bg-zinc-700 transition-all">
                     Închide fără salvare
