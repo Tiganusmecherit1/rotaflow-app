@@ -282,7 +282,14 @@ function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActi
 function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean, swapuri: Swap[], turaOverride: TuraOverride[] = []): { type: string; label: string; swapped?: boolean } {
   const dStr = fmtDateInput(d);
 
-  // Override de criză — are prioritate maximă
+  // CO/CM/AN au prioritate absoluta — nici override-ul de criza nu le suprascrie
+  if (m.id !== 999) {
+    if (inAbsenta(d, m, 'CM')) return { type: 'CM', label: 'CM' };
+    if (inAbsenta(d, m, 'AN')) return { type: 'AN', label: 'AN' };
+    if (inCO(d, m)) return { type: 'CO', label: 'CO' };
+  }
+
+  // Override de criză — prioritate maxima (dupa CO/CM/AN)
   const override = turaOverride.find(o =>
     o.angajatId === m.id &&
     o.data === dStr &&
@@ -310,11 +317,11 @@ function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: b
 }
 
 // Verifica daca un angajat depaseste 48h/saptamana (Art. 114)
-function calcOreSaptamana(m: Angajat, weekStart: Date, echipa: Angajat[], suplinitor: boolean, swapuri: Swap[]): number {
+function calcOreSaptamana(m: Angajat, weekStart: Date, echipa: Angajat[], suplinitor: boolean, swapuri: Swap[], turaOverride: TuraOverride[] = []): number {
   let ore = 0;
   for (let i = 0; i < 7; i++) {
     const d = new Date(weekStart.getTime() + i * 86400000);
-    const t = getTura(d, m, echipa, suplinitor, swapuri);
+    const t = getTura(d, m, echipa, suplinitor, swapuri, turaOverride);
     if (t.type === 'D' || t.type === 'S') ore += 8;
   }
   return ore;
@@ -728,7 +735,7 @@ export default function RotaFlow() {
 
   // Alerte ore maxime (Art. 114 — max 48h/saptamana)
   const alerteOre = useMemo(() => {
-    return echipa.filter(m => calcOreSaptamana(m, weekStart, echipa, suplinitorFinal, swapuri) > 48).map(m => m.nume);
+    return echipa.filter(m => calcOreSaptamana(m, weekStart, echipa, suplinitorFinal, swapuri, turaOverride) > 48).map(m => m.nume);
   }, [echipa, weekStart, suplinitorFinal, swapuri]);
 
   // Detecteaza daca exista override-uri de criza active (planul de criza e aplicat)
@@ -791,7 +798,7 @@ export default function RotaFlow() {
     for (let s = 0; s < saptamaniInainte; s++) {
       const wkStart = new Date(azi.getTime() + s * 7 * 86400000);
       echipa.forEach(m => {
-        const ore = calcOreSaptamana(m, wkStart, echipa, suplinitorFinal, swapuri);
+        const ore = calcOreSaptamana(m, wkStart, echipa, suplinitorFinal, swapuri, turaOverride);
         if (ore > 48) {
           rezultate.push({ angajat: m.nume, saptamanaStart: wkStart, ore });
         }
@@ -1301,7 +1308,7 @@ export default function RotaFlow() {
   const tabelOre = useMemo(() => {
     const displayEchipaOre = suplinitorFinal ? [...echipa, SUPLINITOR_OBJ] : echipa;
     return displayEchipaOre.map((m, i) => {
-      const oreSapt = calcOreSaptamana(m, weekStart, echipa, suplinitorFinal, swapuri);
+      const oreSapt = calcOreSaptamana(m, weekStart, echipa, suplinitorFinal, swapuri, turaOverride);
       const oreSuplSapt = Math.max(0, oreSapt - 40);
       const st = calcScor(m, weekStart);
       const oreLuna = st.ore;
@@ -1494,7 +1501,7 @@ export default function RotaFlow() {
               const col=AVATAR_COLORS[i%5];
               const hasCM=m.absente.some(a=>a.tip==='CM');
               const hasAN=m.absente.some(a=>a.tip==='AN');
-              const oreS=calcOreSaptamana(m,weekStart,echipa,suplinitorFinal,swapuri);
+              const oreS=calcOreSaptamana(m,weekStart,echipa,suplinitorFinal,swapuri,turaOverride);
               return (
                 <div key={i} className={`bg-[#2c2c2e] border ${hasCM?'border-orange-500/50':hasAN?'border-red-500/40':oreS>48?'border-red-500/60':'border-white/[0.08]'} rounded-xl p-3.5 hover:border-white/20 transition-all`}>
                   <div className="flex items-center gap-2 mb-3">
@@ -1577,7 +1584,7 @@ export default function RotaFlow() {
                   </thead>
                   <tbody>
                     {displayEchipa.map((m,mi)=>{
-                      const oreS=calcOreSaptamana(m,weekStart,echipa,suplinitorFinal,swapuri);
+                      const oreS=calcOreSaptamana(m,weekStart,echipa,suplinitorFinal,swapuri,turaOverride);
                       return (
                         <tr key={mi}>
                           <td className="pl-3 pr-4 py-1.5">
