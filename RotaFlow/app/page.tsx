@@ -260,11 +260,14 @@ function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActi
   if (!isSup && inAbsenta(d, m, 'AN')) return { type: 'AN', label: 'AN' };
   if (!isSup && inCO(d, m)) return { type: 'CO', label: 'CO' };
 
-  // Suplinitorul intra in rotatia normala — nu mai are pattern intensiv.
-  // In planul de criza (Optiunea 4), suplinitorul vine doar Duminica prin override,
-  // nu prin getTuraBaza. Pattern-ul intensiv a fost eliminat.
+  // Suplinitorul NU intra in rotatia normala niciodata.
+  // Apare in calendar EXCLUSIV prin override-uri explicite (ex: Duminica din planul de criza).
+  // Fara override -> L (absent).
+  if (isSup) return { type: 'L', label: 'L' };
+
+  // Rotatia normala pentru angajatii permanenti
+  // Suplinitorul NU e inclus in ciclu — prezenta lui nu afecteaza pozitia celorlalti
   const activi = toataEchipa.filter(a => !inCO(d,a) && !inAbsenta(d,a,'any'));
-  if (suplinitorActiv) activi.push(SUPLINITOR_OBJ);
   const poz = activi.findIndex(a => a.id === m.id);
   if (poz === -1) return { type: 'L', label: 'L' };
   const ref = new Date(2026,0,1);
@@ -330,11 +333,12 @@ function inSimConcediu(d: Date, angajatId: number, simConcedii: SimConcediu[]): 
 // Tura pentru simulare — combina concediile simulate cu CO/CM/AN reale
 function getTuraSim(d: Date, m: Angajat, toataEchipa: Angajat[], simConcedii: SimConcediu[], suplinitorActiv: boolean): { type: string; label: string } {
   const isSup = m.id === 999;
-  // Angajatul e absent daca e in concediu simulat SAU in CO/CM/AN real
+  // Suplinitorul NU intra in rotatia simulata — apare doar prin override explicit
+  if (isSup) return { type: 'L', label: 'L' };
   const eAbsentSim = (a: Angajat) => inSimConcediu(d, a.id, simConcedii) || inCO(d, a) || inAbsenta(d, a, 'any');
-  if (!isSup && eAbsentSim(m)) return { type: 'CO', label: 'CO' };
+  if (eAbsentSim(m)) return { type: 'CO', label: 'CO' };
+  // Rotatia simulata foloseste doar angajatii permanenti activi (fara suplinitor)
   const activi = toataEchipa.filter(a => !eAbsentSim(a));
-  if (suplinitorActiv) activi.push(SUPLINITOR_OBJ);
   const poz = activi.findIndex(a => a.id === m.id);
   if (poz === -1) return { type: 'L', label: 'L' };
   const ref = new Date(2026, 0, 1);
