@@ -254,27 +254,15 @@ function countZileLucratoareReale(s: string, e: string, m: Angajat): number {
 
 const SUPLINITOR_OBJ: Angajat = { id: 999, nume: 'Suplinitor', zileCO: 0, concedii: [], absente: [] };
 
-function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean, crizaInterval?: {start: string; end: string}): { type: string; label: string } {
+function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean): { type: string; label: string } {
   const isSup = m.id === 999;
   if (!isSup && inAbsenta(d, m, 'CM')) return { type: 'CM', label: 'CM' };
   if (!isSup && inAbsenta(d, m, 'AN')) return { type: 'AN', label: 'AN' };
   if (!isSup && inCO(d, m)) return { type: 'CO', label: 'CO' };
 
-  // Suplinitorul lucreaza 6 zile/sapt (5D + 1S + 1L) = 48h legal exact,
-  // DAR NUMAI pe durata crizei active. In afara intervalului, intra in rotatia normala.
-  if (isSup && suplinitorActiv && crizaInterval) {
-    const crizaStart = parseD(crizaInterval.start);
-    const crizaEnd = parseD(crizaInterval.end);
-    crizaEnd.setHours(23,59,59);
-    if (d >= crizaStart && d <= crizaEnd) {
-      const wd = d.getDay(); // 0=Du, 1=Lu...6=Sa
-      const idx = wd === 0 ? 6 : wd - 1; // Lu=0...Du=6
-      const pattern = ['D','D','D','D','D','S','L'];
-      const t = pattern[idx];
-      return { type: t, label: t };
-    }
-  }
-
+  // Suplinitorul intra in rotatia normala — nu mai are pattern intensiv.
+  // In planul de criza (Optiunea 4), suplinitorul vine doar Duminica prin override,
+  // nu prin getTuraBaza. Pattern-ul intensiv a fost eliminat.
   const activi = toataEchipa.filter(a => !inCO(d,a) && !inAbsenta(d,a,'any'));
   if (suplinitorActiv) activi.push(SUPLINITOR_OBJ);
   const poz = activi.findIndex(a => a.id === m.id);
@@ -288,10 +276,10 @@ function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActi
   return { type: 'L', label: 'L' };
 }
 
-function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean, swapuri: Swap[], turaOverride: TuraOverride[] = [], crizaInterval?: {start: string; end: string}): { type: string; label: string; swapped?: boolean } {
+function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean, swapuri: Swap[], turaOverride: TuraOverride[] = []): { type: string; label: string; swapped?: boolean } {
   const dStr = fmtDateInput(d);
 
-  // Override de criză — are prioritate maximă, mai mare decât swap-urile normale
+  // Override de criză — are prioritate maximă
   const override = turaOverride.find(o =>
     o.angajatId === m.id &&
     o.data === dStr &&
@@ -304,18 +292,18 @@ function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: b
   if (swA) {
     const b = toataEchipa.find(x => x.id===swA.bId);
     if (b) {
-      const t=getTuraBaza(parseD(swA.bData),b,toataEchipa,suplinitorActiv,crizaInterval);
+      const t=getTuraBaza(parseD(swA.bData),b,toataEchipa,suplinitorActiv);
       if (t.type==='D'||t.type==='S') return {...t,label:t.label+'↔',swapped:true};
     }
   }
   if (swB) {
     const a = toataEchipa.find(x => x.id===swB.aId);
     if (a) {
-      const t=getTuraBaza(parseD(swB.aData),a,toataEchipa,suplinitorActiv,crizaInterval);
+      const t=getTuraBaza(parseD(swB.aData),a,toataEchipa,suplinitorActiv);
       if (t.type==='D'||t.type==='S') return {...t,label:t.label+'↔',swapped:true};
     }
   }
-  return getTuraBaza(d, m, toataEchipa, suplinitorActiv, crizaInterval);
+  return getTuraBaza(d, m, toataEchipa, suplinitorActiv);
 }
 
 // Verifica daca un angajat depaseste 48h/saptamana (Art. 114)
@@ -708,12 +696,23 @@ export default function RotaFlow() {
   // curenta sau urmatoarele 2 saptamani ar ramane cu sub 3 activi (CO simultan, AN, etc.)
   // Verificarea de "activi" se face STRICT fara suplinitor, ca sa nu existe dependenta circulara.
   const suplinitorAutoActiv = useMemo(() => {
+    // Auto-activare DOAR daca exista CM lung (>7 zile) SAU
+    // daca in zilele ACOPERITE DE UN CO REAL raman sub 3 activi.
+    // NU verificam zile fara concedii active — altfel suplinitorul apare permanent.
     const dinCM = echipa.some(m => m.absente.some(a => a.tip==='CM'&&a.zile>7));
     if (dinCM) return true;
 
-    const azi = getMonday(new Date());
-    for (let i = 0; i < 21; i++) { // saptamana curenta + urmatoarele 2
-      const d = new Date(azi.getTime() + i * 86400000);
+    // Colectam toate zilele acoperite de vreun CO real din echipa
+    const zileCO = new Set<string>();
+    echipa.forEach(m => m.concedii.forEach(c => {
+      let d = parseD(c.s);
+      const e = parseD(c.e);
+      while (d <= e) { zileCO.add(fmtDateInput(d)); d = new Date(d.getTime()+86400000); }
+    }));
+
+    // Verificam doar acele zile
+    for (const dataStr of zileCO) {
+      const d = parseD(dataStr);
       const activiFaraSuplinitor = echipa.filter(a => !inCO(d,a) && !inAbsenta(d,a,'any'));
       if (activiFaraSuplinitor.length < 3) return true;
     }
@@ -722,7 +721,7 @@ export default function RotaFlow() {
   const suplinitorFinal = suplinitorActiv || suplinitorAutoActiv;
   const modeAvarie = useMemo(() => echipa.some(m => days.some(d => inAbsenta(d,m,'CM'))), [echipa,days]);
 
-  const getTuraW = useCallback((d: Date, m: Angajat) => getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride,crizaAplicataInterval ?? undefined), [echipa,suplinitorFinal,swapuri,turaOverride,crizaAplicataInterval]);
+  const getTuraW = useCallback((d: Date, m: Angajat) => getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride), [echipa,suplinitorFinal,swapuri,turaOverride]);
 
   // Alerte ore maxime (Art. 114 — max 48h/saptamana)
   const alerteOre = useMemo(() => {
@@ -1038,7 +1037,7 @@ export default function RotaFlow() {
         echipa.forEach(m => {
           const turaPlan = zi.ture[m.id] as string | undefined;
           if (!turaPlan || turaPlan === 'L') return;
-          const turaNormala = getTuraBaza(d, m, echipa, suplinitorFinal, crizaAplicataInterval ?? undefined);
+          const turaNormala = getTuraBaza(d, m, echipa, suplinitorFinal);
           if (turaPlan !== turaNormala.type) {
             noileOverride.push({
               id: `criza_${m.id}_${zi.data}`,
