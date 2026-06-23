@@ -981,12 +981,24 @@ export default function RotaFlow() {
     const issues = analizeazaConformitate(echipa, concediiTestate, simSuplinitor, startCheck, simZile);
 
     if (issues.length > 0) {
-      // Sunt probleme — afisam alerta, nu adaugam inca
       setSimIssues(issues);
       setSimPendingAction('add');
       setSimPendingPayload(nou);
+
+      // Daca sunt probleme de personal insuficient, generam automat planul de criza
+      const arePutiniOameni = issues.some(i => i.tip === 'PUTINI_OAMENI');
+      if (arePutiniOameni) {
+        const primaProblema = issues.find(i => i.tip === 'PUTINI_OAMENI')?.data ?? simStart;
+        const concediiPending = [...concediiTestate];
+        const p = genereazaPlanCriza(echipa, primaProblema, concediiPending, issues);
+        if (p) {
+          setPlanCrizaStart(primaProblema);
+          setPlanCrizaIssues(issues);
+          setPlanCrizaSimConcedii(concediiPending);
+          setPlanCriza(p);
+        }
+      }
     } else {
-      // Fara probleme — adaugam direct
       setSimConcedii(prev => [...prev, nou]);
       setSimIssues([]);
     }
@@ -2367,51 +2379,71 @@ export default function RotaFlow() {
                   <p className="text-[10px] text-zinc-600 mt-2">Perioada se calculează liber în zile calendaristice (1–31). Zilele lucrătoare (Lu-Vi, fără sărbători) reprezintă costul real din CO — weekendurile din interval nu se scad.</p>
                 </div>
 
-                {/* ALERTĂ conformitate cu confirmare */}
+                {/* ALERTĂ conformitate cu Plan Criză auto-generat */}
                 {simPendingAction === 'add' && simIssues.length > 0 && (
                   <div className="bg-red-950/40 border-2 border-red-500/50 rounded-xl p-4 space-y-3">
+                    {/* Header alertă */}
                     <div className="flex items-center gap-2">
                       <AlertTriangle size={18} className="text-red-400 flex-shrink-0"/>
                       <span className="font-bold text-red-300 text-[13px]">ATENȚIE — Probleme de conformitate detectate!</span>
                     </div>
-                    <div className="space-y-1.5">
-                      {simIssues.map((iss,ii)=>(
-                        <div key={ii} className="flex items-start gap-2 bg-black/30 rounded-lg px-3 py-2">
-                          <span className="text-red-400 text-[11px] font-bold flex-shrink-0">{iss.tip==='PUTINI_OAMENI'?'⚠ NU AI SUFICIENȚI OAMENI!':'⚠ ORE PESTE LIMITĂ!'}</span>
-                        </div>
-                      ))}
+
+                    {/* Detalii probleme */}
+                    <div className="space-y-1">
                       {simIssues.slice(0,5).map((iss,ii)=>(
-                        <p key={'d'+ii} className="text-[11px] text-red-300/80 pl-2">· {iss.detalii}</p>
+                        <div key={ii} className="flex items-start gap-2 bg-black/30 rounded-lg px-3 py-1.5">
+                          <span className="text-red-400 text-[10px] font-bold flex-shrink-0 mt-0.5">{iss.tip==='PUTINI_OAMENI'?'⚠ PERSONAL INSUFICIENT':'⚠ ORE LIMITĂ'}</span>
+                          <span className="text-[10px] text-red-300/80">{iss.detalii}</span>
+                        </div>
                       ))}
                       {simIssues.length > 5 && <p className="text-[10px] text-red-400/60 pl-2">...și încă {simIssues.length-5} probleme similare.</p>}
                     </div>
+
+                    {/* Plan Criză auto-generat — afișat direct dacă există personal insuficient */}
+                    {planCriza && simIssues.some(i => i.tip === 'PUTINI_OAMENI') && (
+                      <div className="bg-orange-950/30 border border-orange-500/30 rounded-xl p-3 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle size={13} className="text-orange-400"/>
+                          <span className="text-orange-300 font-bold text-[12px]">Plan Urgență generat automat</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <div className="bg-black/30 rounded-lg py-2">
+                            <p className="text-[16px] font-black text-orange-400">{planCriza.zileCuSup}</p>
+                            <p className="text-[9px] text-zinc-500">vizite suplinitori</p>
+                          </div>
+                          <div className="bg-black/30 rounded-lg py-2">
+                            <p className="text-[16px] font-black text-zinc-300">{planCriza.zileTotal}</p>
+                            <p className="text-[9px] text-zinc-500">zile total criză</p>
+                          </div>
+                          <div className="bg-black/30 rounded-lg py-2">
+                            <p className="text-[13px] font-bold text-emerald-400">{planCriza.dataPlecareSup}</p>
+                            <p className="text-[9px] text-zinc-500">criza se termină</p>
+                          </div>
+                        </div>
+                        <p className="text-[9px] text-zinc-600">
+                          Un local face S săptămânal (rotativ). Suplinitorii din Constanța vin Duminica (2D+2S). Zero S→D garantat.
+                        </p>
+                        <button onClick={()=>{
+                          confirmaAdaugareSimCuProbleme(false);
+                          setTimeout(()=>{ setShowSimulare(false); setShowPlanCriza(true); }, 100);
+                        }} className="w-full bg-orange-900/50 border border-orange-500/40 text-orange-200 font-bold text-[12px] py-2 rounded-lg hover:bg-orange-800/60 transition-all flex items-center justify-center gap-2">
+                          <AlertTriangle size={12}/> Aplică Plan Urgență în calendar
+                        </button>
+                        <button onClick={()=>{ setShowPlanCriza(true); }} className="w-full text-[10px] text-orange-400/70 hover:text-orange-300 transition-colors text-center">
+                          Vezi detalii plan complet →
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Butoane standard */}
                     <div className="border-t border-red-500/20 pt-3">
-                      <p className="text-[12px] text-white font-semibold mb-2">Continui oricum?</p>
+                      <p className="text-[11px] text-zinc-400 mb-2">Sau alege o altă acțiune:</p>
                       <div className="flex flex-wrap gap-2">
                         <button onClick={anuleazaAdaugareSim} className="flex-1 bg-zinc-800 border border-zinc-600 text-zinc-300 font-semibold text-[12px] py-2 rounded-lg hover:bg-zinc-700 transition-all">
                           Nu, renunț
                         </button>
-                        <button onClick={()=>confirmaAdaugareSimCuProbleme(false)} className="flex-1 bg-red-900/40 border border-red-500/40 text-red-300 font-semibold text-[12px] py-2 rounded-lg hover:bg-red-900/60 transition-all">
-                          Da, continui fără suplinitor
-                        </button>
-                        <button onClick={()=>confirmaAdaugareSimCuProbleme(true)} className="flex-1 bg-emerald-900/40 border border-emerald-500/40 text-emerald-300 font-semibold text-[12px] py-2 rounded-lg hover:bg-emerald-900/60 transition-all flex items-center justify-center gap-1.5">
-                          <Plus size={13}/> Da, adaugă suplinitor
-                        </button>
-                        <button onClick={()=>{
-                          // Luam data primei probleme detectate ca start al planului de criza
-                          const primaProblema = simIssues[0]?.data ?? simStart;
-                          const concediiPendingComplet = simPendingPayload
-                            ? [...simConcedii, simPendingPayload]
-                            : simConcedii;
-                          setPlanCrizaStart(primaProblema);
-                          setPlanCrizaIssues(simIssues);
-                          setPlanCrizaSimConcedii(concediiPendingComplet);
-                          const p = genereazaPlanCriza(echipa, primaProblema, concediiPendingComplet, simIssues);
-                          setPlanCriza(p);
-                          setShowSimulare(false);
-                          setShowPlanCriza(true);
-                        }} className="w-full bg-orange-900/40 border border-orange-500/40 text-orange-200 font-semibold text-[12px] py-2.5 rounded-lg hover:bg-orange-800/50 transition-all flex items-center justify-center gap-2">
-                          <AlertTriangle size={13}/> Creează Plan Urgență cu Suplinitor
+                        <button onClick={()=>confirmaAdaugareSimCuProbleme(false)} className="flex-1 bg-zinc-700/60 border border-zinc-600/40 text-zinc-300 font-semibold text-[12px] py-2 rounded-lg hover:bg-zinc-700 transition-all">
+                          Adaugă fără plan
                         </button>
                       </div>
                     </div>
