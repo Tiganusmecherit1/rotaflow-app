@@ -1,3 +1,4 @@
+// RotaFlow v2.8 — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -1086,6 +1087,51 @@ export default function RotaFlow() {
         });
       }
     });
+
+    // Override de tranzitie: ziua dupa criza
+    // 1. Cel care a facut S in ultima zi → L obligatoriu (S->D interzis)
+    // 2. Angajatii care revin din CO in ziua urmatoare → intra la tura (D)
+    //    deoarece rotatia normala ii poate pune pe L (ciclu defazat dupa absenta)
+    const ultimaZiPlan = planCriza.plan.filter(z => !z.ziuaSef).pop();
+    if (ultimaZiPlan) {
+      const dataTransitie = fmtDateInput(ziuaDupaUltima);
+      const expiraTransitie = fmtDateInput(new Date(ziuaDupaUltima.getTime() + 86400000));
+
+      // Cine a facut S in ultima zi → L in ziua tranzitiei
+      echipa.forEach(m => {
+        const turaUltima = ultimaZiPlan.ture[m.id] as string | undefined;
+        if (turaUltima === 'S') {
+          noileOverride.push({
+            id: `criza_tranzitie_${m.id}_${dataTransitie}`,
+            angajatId: m.id,
+            data: dataTransitie,
+            tura: 'L',
+            expiraLa: expiraTransitie,
+          });
+        }
+      });
+
+      // Angajatii care revin din CO exact in ziua tranzitiei → D
+      // (daca rotatia normala ii pune pe L din cauza ciclului defazat)
+      echipa.forEach(m => {
+        const eraInCO = inCO(parseD(planCriza.dataPlecareSup), m);
+        const revineAzi = !inCO(ziuaDupaUltima, m);
+        if (eraInCO && revineAzi) {
+          // Verifica daca rotatia normala il pune pe L
+          const turaLorNormala = getTuraBaza(ziuaDupaUltima, m, echipa, false);
+          const areDejaOverride = noileOverride.some(o => o.angajatId === m.id && o.data === dataTransitie);
+          if (turaLorNormala.type === 'L' && !areDejaOverride) {
+            noileOverride.push({
+              id: `criza_tranzitie_${m.id}_${dataTransitie}`,
+              angajatId: m.id,
+              data: dataTransitie,
+              tura: 'D',
+              expiraLa: expiraTransitie,
+            });
+          }
+        }
+      });
+    }
 
     // Nu activam suplinitorul global — apare in tabel doar prin override-urile de Duminica
     setCrizaAplicataInterval({ start: planCriza.dataStart, end: planCriza.dataPlecareSup });
