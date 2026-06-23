@@ -1,4 +1,4 @@
-// RotaFlow v2.8 — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v2.9 — Fix 10Aug zi normala — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -434,10 +434,10 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
     const zileWE = zileSapt.filter(z => z.getDay() === 0 || z.getDay() === 6);
     const zileLV = zileSapt.filter(z => z.getDay() >= 1 && z.getDay() <= 5);
 
-    // Ziua suplinitorului: DUMINICA (vin dimineata, fac 2D+2S, pleaca noaptea)
-    // Sambata = zi libera pentru toti localii (zi de tranzitie, elimina S->D)
-    const ziuaSup = zileWE.find(z => z.getDay() === 0) ?? zileSapt[zileSapt.length - 1];
-    // Sambata: toti localii liberi (tranzitie intre rotatii)
+    // Ziua suplinitorului: DUMINICA exclusiv.
+    // Daca nu exista Duminica in intervalul acestei saptamani → suplinitorul nu vine.
+    const ziuaSup = zileWE.find(z => z.getDay() === 0) ?? null;
+    // Sambata: zi normala de lucru (localii muncesc)
     const ziuaSa = zileWE.find(z => z.getDay() === 6);
 
     // Cine face S aceasta saptamana
@@ -456,20 +456,12 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
 
       let ziuaSupFlag = false;
 
-      if (fmtDateInput(zi) === fmtDateInput(ziuaSup)) {
-        // Duminica: suplinitorul vine, face 2D+2S, toti localii liberi
-        // Aceasta e si prima zi a noii rotatii (noul om_S incepe luni)
+      if (ziuaSup && fmtDateInput(zi) === fmtDateInput(ziuaSup)) {
+        // Duminica: suplinitorul vine (2D+2S), toti localii liberi — zi de tranzitie
         ture['SUP'] = '2D+2S';
         ziuaSupFlag = true;
-      } else if (ziuaSa && fmtDateInput(zi) === fmtDateInput(ziuaSa)) {
-        // Sambata: zi libera pentru toti localii (tranzitie intre rotatii)
-        // Niciun local nu lucreaza — suplinitorul NU vine sambata
-        // -> Acoperire redusa sambata (0 posturi locale), dar e ziua de odihna/tranzitie
-        // Optiune: daca vrei acoperire sambata, pune omS sa lucreze si sambata
-        ture[omS] = 'S'; // omS (cel care termina saptamana) face inca S sambata
-        omD.forEach(id => { ture[id] = 'D'; }); // ceilalti fac D
       } else {
-        // Zi normala Lu-Vi: om_S face S, om_D fac D
+        // Zi normala (Lu-Sa): om_S face S, om_D fac D
         ture[omS] = 'S';
         omD.forEach(id => { ture[id] = 'D'; });
       }
