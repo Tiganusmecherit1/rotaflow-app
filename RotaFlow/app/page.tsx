@@ -1,4 +1,4 @@
-// RotaFlow v3.2 — Fix saptamana compensare + turaPrev corect — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v3.3 — Distributie D/S echitabila post-CO — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -1184,7 +1184,9 @@ export default function RotaFlow() {
       });
 
       const oreAcc: Record<number, number> = {};
-      echipa.forEach(m => { oreAcc[m.id] = 0; });
+      const sCnt: Record<number, number> = {};
+      const dCnt: Record<number, number> = {};
+      echipa.forEach(m => { oreAcc[m.id] = 0; sCnt[m.id] = 0; dCnt[m.id] = 0; });
 
       // Tura din Duminica DINAINTEA saptamanii de compensare (ziua precedenta lui luniComp)
       const ziDuDinainteSapt = new Date(luniComp.getTime() - 86400000);
@@ -1214,26 +1216,27 @@ export default function RotaFlow() {
           (oreAcc[m.id] || 0) + 8 <= targetOre[m.id]
         );
 
-        // Prioritate D: reveniti primul, apoi dupa ore acumulate
-        const potD = potLucra
-          .filter(m => turaPrevComp[m.id] !== 'S')
-          .sort((a,b) => {
-            const aRev = reveniti.some(r=>r.id===a.id) ? 0 : 1;
-            const bRev = reveniti.some(r=>r.id===b.id) ? 0 : 1;
-            return aRev - bRev || (oreAcc[a.id]||0) - (oreAcc[b.id]||0);
-          });
+        // STEP 1: Alege S - cel cu cele mai putine S-uri (echitate D/S)
+        // Revenitul din CO are prioritate MICA la S (el ia mai multe D)
+        const candidatiS = potLucra
+          .slice()
+          .sort((a,b) => (sCnt[a.id]||0)-(sCnt[b.id]||0) || (reveniti.some(r=>r.id===a.id)?1:0)-(reveniti.some(r=>r.id===b.id)?1:0));
+        const alesS = candidatiS[0]?.id ?? null;
 
-        const alesiD = potD.slice(0,2).map(m => m.id);
+        // STEP 2: Alege 2xD - nu poate fi cel cu S, nu poate fi cel cu S ieri
+        const potDStrict = potLucra.filter(m => m.id !== alesS && turaPrevComp[m.id] !== 'S');
+        const potDSort = potDStrict
+          .slice()
+          .sort((a,b) => (dCnt[a.id]||0)-(dCnt[b.id]||0) || (reveniti.some(r=>r.id===a.id)?0:1)-(reveniti.some(r=>r.id===b.id)?0:1));
+        let alesiD = potDSort.slice(0,2).map(m=>m.id);
 
-        const potS = potLucra
-          .filter(m => !alesiD.includes(m.id))
-          .sort((a,b) => {
-            const aRev = reveniti.some(r=>r.id===a.id) ? 0 : 1;
-            const bRev = reveniti.some(r=>r.id===b.id) ? 0 : 1;
-            return aRev - bRev || (oreAcc[a.id]||0) - (oreAcc[b.id]||0);
-          });
-
-        const alesS = potS[0]?.id ?? null;
+        // Fallback: daca nu avem 2D (ex: prea multi au facut S ieri)
+        if (alesiD.length < 2) {
+          const extra = potLucra
+            .filter(m => m.id !== alesS && !alesiD.includes(m.id))
+            .sort((a,b) => (dCnt[a.id]||0)-(dCnt[b.id]||0));
+          alesiD = [...alesiD, ...extra.slice(0, 2-alesiD.length).map(m=>m.id)];
+        }
 
         // Cream override-uri doar unde difera de rotatia normala
         echipa.forEach(m => {
@@ -1249,8 +1252,12 @@ export default function RotaFlow() {
             });
           }
           turaPrevComp[m.id] = turaPlanuita;
-          if (turaPlanuita === 'D' || turaPlanuita === 'S') {
+          if (turaPlanuita === 'D') {
             oreAcc[m.id] = (oreAcc[m.id] || 0) + 8;
+            dCnt[m.id] = (dCnt[m.id] || 0) + 1;
+          } else if (turaPlanuita === 'S') {
+            oreAcc[m.id] = (oreAcc[m.id] || 0) + 8;
+            sCnt[m.id] = (sCnt[m.id] || 0) + 1;
           }
         });
       }
