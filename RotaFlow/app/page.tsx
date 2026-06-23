@@ -1076,7 +1076,7 @@ export default function RotaFlow() {
       }
     });
 
-    setSuplinitorActiv(true);
+    // Nu activam suplinitorul global — apare in tabel doar prin override-urile de Duminica
     setCrizaAplicataInterval({ start: planCriza.dataStart, end: planCriza.dataPlecareSup });
     setTuraOverride(prev => [...prev.filter(o => !o.id.startsWith('criza_')), ...noileOverride]);
 
@@ -1286,7 +1286,11 @@ export default function RotaFlow() {
     addLog(`Pontaj ore exportat: ${luna}`);
   };
 
-  const displayEchipa = useMemo(()=>suplinitorFinal?[...echipa,SUPLINITOR_OBJ]:echipa,[echipa,suplinitorFinal]);
+  const displayEchipa = useMemo(()=>{
+    const azi = new Date(); azi.setHours(0,0,0,0);
+    const areOverrideSup = turaOverride.some(o => o.angajatId === 999 && parseD(o.expiraLa) > azi);
+    return (suplinitorFinal || areOverrideSup) ? [...echipa, SUPLINITOR_OBJ] : echipa;
+  },[echipa, suplinitorFinal, turaOverride]);
   const clasament = useMemo(()=>[...echipa].map(m=>({...m,...calcScor(m,weekStart)})).sort((a,b)=>b.scor-a.scor),[echipa,weekStart,calcScor]);
 
   // ─── Tabel Ore & Suplimentare ───
@@ -2226,9 +2230,8 @@ export default function RotaFlow() {
                       {crizaActiva && (
                         <button onClick={()=>{
                           setTuraOverride(prev => prev.filter(o => !o.id.startsWith('criza_')));
-                          setSuplinitorActiv(false);
                           setCrizaAplicataInterval(null);
-                          addLog('Plan Criză anulat — override-uri de tură șterse, suplinitor dezactivat');
+                          addLog('Plan Criză anulat — override-uri de tură șterse');
                           setShowPlanCriza(false);
                         }} className="flex-1 bg-red-900/30 border border-red-500/30 text-red-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-red-900/50 transition-all">
                           ✕ Anulează criza
