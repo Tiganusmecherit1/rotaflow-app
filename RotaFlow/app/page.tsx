@@ -384,16 +384,15 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
   const activiStart = echipa.filter(m => !eAbsent(m, dataStart));
   if (activiStart.length < 2) return null;
 
-  // Determinam durata crizei: pana cand revin suficienti angajati (4+ activi)
-  // sau maxim 4 saptamani
+  // Determinam ultima zi de criza = ziua inainte ca 4+ angajati sa fie activi
+  // (= ultima zi cu CO activ pentru ultimul angajat in concediu)
   let dataEnd: Date = new Date(dataStart.getTime() + 28 * 86400000);
-  for (let i = 1; i < 28; i++) {
+  for (let i = 1; i < 60; i++) {
     const d = new Date(dataStart.getTime() + i * 86400000);
-    const activi = echipa.filter(m => !eAbsent(m, d));
-    if (activi.length >= 4) {
-      // Terminam la sfarsitul saptamanii curente
-      const lu = getMonday(d);
-      dataEnd = new Date(lu.getTime() + 6 * 86400000); // Duminica saptamanii
+    const activiD = echipa.filter(m => !eAbsent(m, d));
+    if (activiD.length >= 4) {
+      // Criza se termina ziua precedenta (ultima zi cu < 4 activi)
+      dataEnd = new Date(d.getTime() - 86400000);
       break;
     }
   }
@@ -1025,7 +1024,10 @@ export default function RotaFlow() {
     if (!planCriza) return;
 
     const noileOverride: TuraOverride[] = [];
-    const expiraLa = planCriza.dataPlecareSup;
+    // expiraLa = ziua DUPA ultima zi de criza (override-urile se aplica inclusiv pe ultima zi)
+    const dataUltimaZi = parseD(planCriza.dataPlecareSup);
+    const ziuaDupaUltima = new Date(dataUltimaZi.getTime() + 86400000);
+    const expiraLa = fmtDateInput(ziuaDupaUltima);
 
     planCriza.plan.forEach(zi => {
       if (zi.ziuaSef) {
