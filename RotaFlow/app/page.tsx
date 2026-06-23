@@ -1,4 +1,4 @@
-// RotaFlow v3.6 — Plan Criza auto-detectie din CO reale — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v3.7 — Fix prag criza < 4 activi — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -1622,8 +1622,8 @@ export default function RotaFlow() {
               <FlaskConical size={13}/> Simulare Concedii
             </button>
             <button onClick={()=>{
-              // Detectam automat criza din CO-urile reale (nu din Simulare)
-              // Cautam prima zi cu < 4 activi in urmatoarele 90 de zile
+              // Detectam automat criza din CO-urile reale
+              // Criza = mai putin de 4 angajati activi (necesarul minim fara suplinitor)
               const azi = new Date(); azi.setHours(0,0,0,0);
               let primaZiCriza = '';
               let ultimaZiCriza = '';
@@ -1632,14 +1632,14 @@ export default function RotaFlow() {
               for (let i = 0; i < 90; i++) {
                 const d = new Date(azi.getTime() + i * 86400000);
                 const activi = echipa.filter(m => !inCO(d, m) && !inAbsenta(d, m, 'any'));
-                if (activi.length < 3) {
+                if (activi.length < 4) {
                   const dStr = fmtDateInput(d);
                   if (!primaZiCriza) primaZiCriza = dStr;
                   ultimaZiCriza = dStr;
                   issuesReale.push({
                     tip: 'PUTINI_OAMENI',
                     data: dStr,
-                    detalii: `${fmtDate(d)}: ${activi.length} activi (minim 3 necesar)`
+                    detalii: `${fmtDate(d)}: ${activi.length} activi din ${echipa.length} (necesari minim 4 fără suplinitor)`
                   });
                 }
               }
@@ -1652,7 +1652,6 @@ export default function RotaFlow() {
                 const p = genereazaPlanCriza(echipa, primaZiCriza, [], issuesReale, ultimaZiCriza);
                 if (p) setPlanCriza(p);
               } else {
-                // Fara criza detectata — deschidem cu today, fara plan
                 setPlanCrizaStart(fmtDateInput(azi));
                 setPlanCrizaEnd('');
                 setPlanCrizaIssues([]);
