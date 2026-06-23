@@ -1,4 +1,4 @@
-// RotaFlow v3.4 — PDF cu selector luna — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v3.5 — Culori aprinse + Plan Criza cu picker start/end — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -379,7 +379,7 @@ interface PlanCriza {
   plan: PlanCrizaZi[];
 }
 
-function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim: SimConcediu[] = [], simIssues: ConformitateIssue[] = []): PlanCriza | null {
+function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim: SimConcediu[] = [], simIssues: ConformitateIssue[] = [], dataEndStr?: string): PlanCriza | null {
   const dataStart = parseD(dataStartStr);
 
   // Angajatii locali activi (fara sef, fara cei in CO/CM/AN sau CO simulat)
@@ -396,16 +396,20 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
   const activiStart = echipa.filter(m => !eAbsent(m, dataStart));
   if (activiStart.length < 2) return null;
 
-  // Determinam ultima zi de criza = ziua inainte ca 4+ angajati sa fie activi
-  // (= ultima zi cu CO activ pentru ultimul angajat in concediu)
+  // Determinam ultima zi de criza:
+  // 1. Daca utilizatorul a specificat manual o data de sfarsit → o folosim
+  // 2. Altfel → calculam automat (ultima zi cu < 4 activi)
   let dataEnd: Date = new Date(dataStart.getTime() + 28 * 86400000);
-  for (let i = 1; i < 60; i++) {
-    const d = new Date(dataStart.getTime() + i * 86400000);
-    const activiD = echipa.filter(m => !eAbsent(m, d));
-    if (activiD.length >= 4) {
-      // Criza se termina ziua precedenta (ultima zi cu < 4 activi)
-      dataEnd = new Date(d.getTime() - 86400000);
-      break;
+  if (dataEndStr) {
+    dataEnd = parseD(dataEndStr);
+  } else {
+    for (let i = 1; i < 60; i++) {
+      const d = new Date(dataStart.getTime() + i * 86400000);
+      const activiD = echipa.filter(m => !eAbsent(m, d));
+      if (activiD.length >= 4) {
+        dataEnd = new Date(d.getTime() - 86400000);
+        break;
+      }
     }
   }
 
@@ -526,12 +530,12 @@ function analizeazaConformitate(echipa: Angajat[], simConcedii: SimConcediu[], s
 
 
 const SHIFT_STYLE: Record<string, string> = {
-  D:  'bg-sky-950/50 text-sky-300 border border-sky-500/30',
-  S:  'bg-purple-950/50 text-purple-300 border border-purple-500/30',
+  D:  'bg-sky-800/70 text-sky-100 border border-sky-400/50',
+  S:  'bg-purple-800/70 text-purple-100 border border-purple-400/50',
   L:  'bg-white/[0.03] text-zinc-600 border border-transparent',
-  CO: 'bg-rose-950/40 text-rose-400 border border-rose-500/25',
-  CM: 'bg-orange-950/50 text-orange-300 border border-orange-500/40',
-  AN: 'bg-red-950/60 text-red-300 border border-red-500/40',
+  CO: 'bg-rose-800/60 text-rose-100 border border-rose-400/40',
+  CM: 'bg-orange-800/60 text-orange-100 border border-orange-400/50',
+  AN: 'bg-red-800/70 text-red-100 border border-red-400/50',
 };
 
 // Stiluri pentru print
@@ -576,6 +580,7 @@ export default function RotaFlow() {
   const [showPlanCriza, setShowPlanCriza] = useState(false);
   const [planCriza, setPlanCriza] = useState<PlanCriza | null>(null);
   const [planCrizaStart, setPlanCrizaStart] = useState(fmtDateInput(new Date()));
+  const [planCrizaEnd, setPlanCrizaEnd] = useState('');
   const [planCrizaIssues, setPlanCrizaIssues] = useState<ConformitateIssue[]>([]);
   const [planCrizaSimConcedii, setPlanCrizaSimConcedii] = useState<SimConcediu[]>([]);
   const [crizaAplicataInterval, setCrizaAplicataInterval] = useState<{start: string; end: string} | null>(null);
@@ -996,11 +1001,14 @@ export default function RotaFlow() {
       // Daca sunt probleme de personal insuficient, generam automat planul de criza
       const arePutiniOameni = issues.some(i => i.tip === 'PUTINI_OAMENI');
       if (arePutiniOameni) {
-        const primaProblema = issues.find(i => i.tip === 'PUTINI_OAMENI')?.data ?? simStart;
+        const dateProbleme = issues.filter(i => i.tip === 'PUTINI_OAMENI').map(i => i.data).sort();
+        const primaProblema = dateProbleme[0] ?? simStart;
+        const ultimaProblema = dateProbleme[dateProbleme.length - 1] ?? primaProblema;
         const concediiPending = [...concediiTestate];
         const p = genereazaPlanCriza(echipa, primaProblema, concediiPending, issues);
         if (p) {
           setPlanCrizaStart(primaProblema);
+          setPlanCrizaEnd(ultimaProblema);
           setPlanCrizaIssues(issues);
           setPlanCrizaSimConcedii(concediiPending);
           setPlanCriza(p);
@@ -2343,18 +2351,36 @@ export default function RotaFlow() {
                 <button onClick={()=>setShowPlanCriza(false)} className="w-7 h-7 flex items-center justify-center bg-white/[0.07] hover:bg-white/10 text-zinc-400 rounded-md"><X size={14}/></button>
               </div>
 
-              {/* Selector dată start */}
-              <div className="px-6 py-4 border-b border-white/[0.07] flex items-center gap-3 flex-wrap">
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <label className="text-[11px] text-zinc-400 whitespace-nowrap font-semibold">Data de start a crizei:</label>
-                  <input type="date" value={planCrizaStart}
-                    onChange={e => { setPlanCrizaStart(e.target.value); setPlanCrizaIssues([]); setPlanCrizaSimConcedii([]); setPlanCriza(null); }}
-                    className="bg-black/40 border border-white/[0.08] rounded-lg px-3 py-1.5 text-[12px] text-white outline-none focus:border-red-500/50 transition-all"/>
+              {/* Selector perioadă criză */}
+              <div className="px-6 py-4 border-b border-white/[0.07] space-y-3">
+                {planCrizaStart && planCrizaEnd && (
+                  <div className="flex items-center gap-2 text-[10px] text-emerald-400 bg-emerald-950/30 border border-emerald-500/20 rounded-lg px-3 py-1.5">
+                    <span>✓ Perioadă detectată automat din Simulare —</span>
+                    <span className="font-bold">{fmtDate(parseD(planCrizaStart))} → {fmtDate(parseD(planCrizaEnd))}</span>
+                    <span className="text-zinc-500">| poți ajusta manual mai jos</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <label className="text-[11px] text-zinc-400 whitespace-nowrap font-semibold">Start:</label>
+                    <input type="date" value={planCrizaStart}
+                      onChange={e => { setPlanCrizaStart(e.target.value); setPlanCriza(null); }}
+                      className="bg-black/40 border border-white/[0.08] rounded-lg px-3 py-1.5 text-[12px] text-white outline-none focus:border-red-500/50 transition-all"/>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[11px] text-zinc-400 whitespace-nowrap font-semibold">End:</label>
+                    <input type="date" value={planCrizaEnd}
+                      onChange={e => { setPlanCrizaEnd(e.target.value); setPlanCriza(null); }}
+                      min={planCrizaStart}
+                      className="bg-black/40 border border-white/[0.08] rounded-lg px-3 py-1.5 text-[12px] text-white outline-none focus:border-red-500/50 transition-all"/>
+                  </div>
+                  <button onClick={()=>{
+                    const p = genereazaPlanCriza(echipa, planCrizaStart, planCrizaSimConcedii, planCrizaIssues, planCrizaEnd || undefined);
+                    if(p) setPlanCriza(p);
+                  }} className="bg-red-900/40 border border-red-500/30 text-red-300 text-[12px] font-semibold px-4 py-1.5 rounded-lg hover:bg-red-800/50 transition-all flex items-center gap-1.5">
+                    <AlertTriangle size={12}/> Generează plan
+                  </button>
                 </div>
-                <button onClick={()=>{ const p=genereazaPlanCriza(echipa, planCrizaStart, planCrizaSimConcedii, planCrizaIssues); if(p) setPlanCriza(p); }}
-                  className="bg-red-900/40 border border-red-500/30 text-red-300 text-[12px] font-semibold px-4 py-1.5 rounded-lg hover:bg-red-800/50 transition-all flex items-center gap-1.5">
-                  <AlertTriangle size={12}/> Generează plan
-                </button>
               </div>
 
               <div className="p-6 space-y-5">
@@ -2433,7 +2459,7 @@ export default function RotaFlow() {
                     </div>
 
                     <div className="flex gap-2 pt-2">
-                      <button onClick={()=>{ const p=genereazaPlanCriza(echipa, planCrizaStart, planCrizaSimConcedii, planCrizaIssues); if(p) setPlanCriza(p); }}
+                      <button onClick={()=>{ const p=genereazaPlanCriza(echipa, planCrizaStart, planCrizaSimConcedii, planCrizaIssues, planCrizaEnd || undefined); if(p) setPlanCriza(p); }}
                         className="flex-1 bg-[#2c2c2e] border border-white/[0.07] text-zinc-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-white/[0.05] transition-all">
                         🔄 Regenerează plan
                       </button>
