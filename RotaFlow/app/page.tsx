@@ -1,4 +1,4 @@
-// RotaFlow v3.0 — Tranzitie fair dupa criza — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v3.1 — Saptamana compensare post-CO — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -1161,7 +1161,94 @@ export default function RotaFlow() {
       });
     }
 
-    // Nu activam suplinitorul global — apare in tabel doar prin override-urile de Duminica
+    // Override saptamana de compensare: saptamana completa dupa criza
+    // Reveniții din CO au prioritate la ture (target 40h),
+    // cei care au muncit in criza au prioritate la libere (target 32h)
+    {
+      const luniComp = getMonday(ziuaDupaUltima);
+      const sfComp = new Date(luniComp.getTime() + 6 * 86400000); // Duminica
+      const expiraComp = fmtDateInput(new Date(luniComp.getTime() + 7 * 86400000));
+
+      const reveniti = echipa.filter(m =>
+        inCO(parseD(planCriza.dataPlecareSup), m) && !inCO(ziuaDupaUltima, m)
+      );
+      const auMuncit = echipa.filter(m =>
+        !inCO(parseD(planCriza.dataStart), m)
+      );
+
+      // Target ore: reveniti 40h, obositi 32h
+      const targetOre: Record<number, number> = {};
+      echipa.forEach(m => {
+        targetOre[m.id] = reveniti.some(r => r.id === m.id) ? 40 : 32;
+      });
+
+      const oreAcc: Record<number, number> = {};
+      echipa.forEach(m => { oreAcc[m.id] = 0; });
+
+      const turaPrevComp: Record<number, string> = {};
+      echipa.forEach(m => {
+        // Tura din ziua tranzitiei (deja calculata in override-uri)
+        const ovTranz = noileOverride.find(o => o.angajatId === m.id && o.data === fmtDateInput(ziuaDupaUltima));
+        turaPrevComp[m.id] = ovTranz?.tura ?? getTuraBaza(ziuaDupaUltima, m, echipa, false).type;
+      });
+
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(luniComp.getTime() + i * 86400000);
+        // Sarim ziua tranzitiei (deja tratata)
+        if (fmtDateInput(d) === fmtDateInput(ziuaDupaUltima)) continue;
+        // Sarim zilele in afara intervalului saptamanii
+        if (d < luniComp || d > sfComp) continue;
+
+        const dStr = fmtDateInput(d);
+
+        // Disponibili: sub limita de ore si nu in CO
+        const potLucra = echipa.filter(m =>
+          !inCO(d, m) && !inAbsenta(d, m, 'any') &&
+          (oreAcc[m.id] || 0) + 8 <= targetOre[m.id]
+        );
+
+        // Prioritate D: reveniti primul, apoi dupa ore acumulate
+        const potD = potLucra
+          .filter(m => turaPrevComp[m.id] !== 'S')
+          .sort((a,b) => {
+            const aRev = reveniti.some(r=>r.id===a.id) ? 0 : 1;
+            const bRev = reveniti.some(r=>r.id===b.id) ? 0 : 1;
+            return aRev - bRev || (oreAcc[a.id]||0) - (oreAcc[b.id]||0);
+          });
+
+        const alesiD = potD.slice(0,2).map(m => m.id);
+
+        const potS = potLucra
+          .filter(m => !alesiD.includes(m.id))
+          .sort((a,b) => {
+            const aRev = reveniti.some(r=>r.id===a.id) ? 0 : 1;
+            const bRev = reveniti.some(r=>r.id===b.id) ? 0 : 1;
+            return aRev - bRev || (oreAcc[a.id]||0) - (oreAcc[b.id]||0);
+          });
+
+        const alesS = potS[0]?.id ?? null;
+
+        // Cream override-uri doar unde difera de rotatia normala
+        echipa.forEach(m => {
+          const turaPlanuita: 'D'|'S'|'L' = alesiD.includes(m.id) ? 'D' : m.id === alesS ? 'S' : 'L';
+          const turaNorm = getTuraBaza(d, m, echipa, false);
+          if (turaPlanuita !== turaNorm.type) {
+            noileOverride.push({
+              id: `criza_comp_${m.id}_${dStr}`,
+              angajatId: m.id,
+              data: dStr,
+              tura: turaPlanuita,
+              expiraLa: expiraComp,
+            });
+          }
+          turaPrevComp[m.id] = turaPlanuita;
+          if (turaPlanuita === 'D' || turaPlanuita === 'S') {
+            oreAcc[m.id] = (oreAcc[m.id] || 0) + 8;
+          }
+        });
+      }
+    }
+
     setCrizaAplicataInterval({ start: planCriza.dataStart, end: planCriza.dataPlecareSup });
     setTuraOverride(prev => [...prev.filter(o => !o.id.startsWith('criza_')), ...noileOverride]);
 
