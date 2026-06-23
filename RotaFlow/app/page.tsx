@@ -1,4 +1,4 @@
-// RotaFlow v3.5 — Culori aprinse + Plan Criza cu picker start/end — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v3.6 — Plan Criza auto-detectie din CO reale — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -1621,8 +1621,46 @@ export default function RotaFlow() {
             <button onClick={()=>setShowSimulare(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-900/40 border border-purple-500/30 text-purple-300 text-[12px] font-semibold hover:bg-purple-800/50 transition-all">
               <FlaskConical size={13}/> Simulare Concedii
             </button>
-            <button onClick={()=>{ setShowPlanCriza(true); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 border border-red-500/30 text-red-300 text-[12px] font-semibold hover:bg-red-800/50 transition-all">
+            <button onClick={()=>{
+              // Detectam automat criza din CO-urile reale (nu din Simulare)
+              // Cautam prima zi cu < 4 activi in urmatoarele 90 de zile
+              const azi = new Date(); azi.setHours(0,0,0,0);
+              let primaZiCriza = '';
+              let ultimaZiCriza = '';
+              const issuesReale: ConformitateIssue[] = [];
+
+              for (let i = 0; i < 90; i++) {
+                const d = new Date(azi.getTime() + i * 86400000);
+                const activi = echipa.filter(m => !inCO(d, m) && !inAbsenta(d, m, 'any'));
+                if (activi.length < 3) {
+                  const dStr = fmtDateInput(d);
+                  if (!primaZiCriza) primaZiCriza = dStr;
+                  ultimaZiCriza = dStr;
+                  issuesReale.push({
+                    tip: 'PUTINI_OAMENI',
+                    data: dStr,
+                    detalii: `${fmtDate(d)}: ${activi.length} activi (minim 3 necesar)`
+                  });
+                }
+              }
+
+              if (primaZiCriza) {
+                setPlanCrizaStart(primaZiCriza);
+                setPlanCrizaEnd(ultimaZiCriza);
+                setPlanCrizaIssues(issuesReale);
+                setPlanCrizaSimConcedii([]);
+                const p = genereazaPlanCriza(echipa, primaZiCriza, [], issuesReale, ultimaZiCriza);
+                if (p) setPlanCriza(p);
+              } else {
+                // Fara criza detectata — deschidem cu today, fara plan
+                setPlanCrizaStart(fmtDateInput(azi));
+                setPlanCrizaEnd('');
+                setPlanCrizaIssues([]);
+                setPlanCrizaSimConcedii([]);
+                setPlanCriza(null);
+              }
+              setShowPlanCriza(true);
+            }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 border border-red-500/30 text-red-300 text-[12px] font-semibold hover:bg-red-800/50 transition-all">
               <AlertTriangle size={13}/> Plan Criză
             </button>
           </div>
@@ -2353,13 +2391,21 @@ export default function RotaFlow() {
 
               {/* Selector perioadă criză */}
               <div className="px-6 py-4 border-b border-white/[0.07] space-y-3">
-                {planCrizaStart && planCrizaEnd && (
-                  <div className="flex items-center gap-2 text-[10px] text-emerald-400 bg-emerald-950/30 border border-emerald-500/20 rounded-lg px-3 py-1.5">
-                    <span>✓ Perioadă detectată automat din Simulare —</span>
-                    <span className="font-bold">{fmtDate(parseD(planCrizaStart))} → {fmtDate(parseD(planCrizaEnd))}</span>
-                    <span className="text-zinc-500">| poți ajusta manual mai jos</span>
+                {planCrizaIssues.length > 0 && planCrizaStart && planCrizaEnd ? (
+                  <div className="bg-red-950/40 border border-red-500/30 rounded-lg px-3 py-2 space-y-1">
+                    <div className="flex items-center gap-2 text-[11px] text-red-300 font-semibold">
+                      <AlertTriangle size={12}/>
+                      <span>Perioadă cu probleme detectată automat — {fmtDate(parseD(planCrizaStart))} → {fmtDate(parseD(planCrizaEnd))}</span>
+                    </div>
+                    <div className="space-y-0.5 max-h-24 overflow-y-auto">
+                      {planCrizaIssues.slice(0,5).map((iss,i) => (
+                        <p key={i} className="text-[10px] text-red-400/80 pl-4">· {iss.detalii}</p>
+                      ))}
+                      {planCrizaIssues.length > 5 && <p className="text-[10px] text-red-500/60 pl-4">...și încă {planCrizaIssues.length-5} zile similare</p>}
+                    </div>
+                    <p className="text-[10px] text-zinc-500 pl-4">Poți ajusta manual datele de mai jos.</p>
                   </div>
-                )}
+                ) : null}
                 <div className="flex items-center gap-3 flex-wrap">
                   <div className="flex items-center gap-2">
                     <label className="text-[11px] text-zinc-400 whitespace-nowrap font-semibold">Start:</label>
@@ -2386,8 +2432,9 @@ export default function RotaFlow() {
               <div className="p-6 space-y-5">
                 {!planCriza ? (
                   <div className="text-center py-8">
-                    <p className="text-emerald-400 font-semibold text-[14px] mb-2">Echipa e la capacitate normală!</p>
-                    <p className="text-zinc-500 text-[12px]">Nu există devieri active — toți angajații sunt disponibili. Planul de criză e necesar doar când rămân sub 4 angajați activi.</p>
+                    <p className="text-emerald-400 font-semibold text-[14px] mb-2">✓ Echipa e la capacitate normală!</p>
+                    <p className="text-zinc-500 text-[12px]">Nu am detectat perioade cu personal insuficient în următoarele 90 de zile.</p>
+                    <p className="text-zinc-600 text-[11px] mt-2">Poți selecta manual o perioadă de start/end și genera un plan preventiv.</p>
                   </div>
                 ) : (
                   <>
