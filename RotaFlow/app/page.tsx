@@ -1,4 +1,4 @@
-// RotaFlow v3.3 — Distributie D/S echitabila post-CO — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v3.4 — PDF cu selector luna — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -591,6 +591,10 @@ export default function RotaFlow() {
   const [swBData, setSwBData] = useState(fmtDateInput(new Date()));
   const [swNota, setSwNota] = useState('');
   const [lunaOffset, setLunaOffset] = useState(0);
+  const [showPdfPicker, setShowPdfPicker] = useState(false);
+  const [pdfLunaDate, setPdfLunaDate] = useState(() => {
+    const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  });
 
   const [echitatePerioada, setEchitatePerioada] = useState<'luna'|'trimestru'|'an'|'custom'>('an');
   const [echitateCustomStart, setEchitateCustomStart] = useState(fmtDateInput(new Date(new Date().getFullYear(),0,1)));
@@ -1334,10 +1338,11 @@ export default function RotaFlow() {
   },[tempNume, setEchipa, addLog, echipa, incarcaTotul]);
 
   // ─── PDF complet (luna intreaga) ───
-  const generatePDF = () => {
+  const generatePDF = (lunaRef?: Date) => {
     const doc = new jsPDF({ orientation: 'landscape' });
-    const luna = fmtMonth(lunaStart);
-    const yr = lunaStart.getFullYear(), mo = lunaStart.getMonth();
+    const refDate = lunaRef ?? lunaStart;
+    const luna = fmtMonth(refDate);
+    const yr = refDate.getFullYear(), mo = refDate.getMonth();
     const nrZile = new Date(yr, mo+1, 0).getDate();
 
     doc.setFontSize(16); doc.setTextColor(0, 120, 212);
@@ -1381,7 +1386,7 @@ export default function RotaFlow() {
     autoTable(doc, {
       head:[['Angajat','Zile lucrate','Ore lucrate','Sarbatori lucrate','CO ramas','CM','Abs. Nemot.','Scor performanta']],
       body: echipa.map(m=>{
-        const s=calcScor(m,lunaStart);
+        const s=calcScor(m,refDate);
         return[faraDiacritice(m.nume),s.zile.toString(),`${s.ore}h`,s.sarbLucrate.toString(),m.zileCO.toString(),s.zileCM.toString(),s.zileAN.toString(),`${s.scor}p`];
       }),
       startY: statsY+4, styles:{fontSize:9}, headStyles:{fillColor:[0,120,212]},
@@ -1573,10 +1578,29 @@ export default function RotaFlow() {
               </button>
             ))}
           </div>
-          <div className="flex gap-2">
-            <button onClick={generatePDF} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-900/40 border border-emerald-500/30 text-emerald-300 text-[12px] font-semibold hover:bg-emerald-800/50 transition-all">
+          <div className="flex gap-2 relative">
+            <button onClick={()=>{ setPdfLunaDate(`${weekStart.getFullYear()}-${String(weekStart.getMonth()+1).padStart(2,'0')}`); setShowPdfPicker(p=>!p); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-900/40 border border-emerald-500/30 text-emerald-300 text-[12px] font-semibold hover:bg-emerald-800/50 transition-all">
               <FileDown size={13}/> PDF
             </button>
+            {showPdfPicker && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={()=>setShowPdfPicker(false)}/>
+                <div className="absolute top-9 left-0 z-50 bg-[#2c2c2e] border border-white/[0.1] rounded-xl shadow-2xl p-3 w-56" onClick={e=>e.stopPropagation()}>
+                <p className="text-[11px] text-zinc-400 font-semibold mb-2">Alege luna pentru PDF:</p>
+                <input type="month" value={pdfLunaDate}
+                  onChange={e=>setPdfLunaDate(e.target.value)}
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-1.5 text-[12px] text-white outline-none focus:border-emerald-500/50 transition-all mb-2"/>
+                <button onClick={()=>{
+                  const [yr, mo] = pdfLunaDate.split('-').map(Number);
+                  generatePDF(new Date(yr, mo-1, 1));
+                  setShowPdfPicker(false);
+                }} className="w-full bg-emerald-900/50 border border-emerald-500/40 text-emerald-300 text-[12px] font-semibold py-1.5 rounded-lg hover:bg-emerald-800/60 transition-all flex items-center justify-center gap-1.5">
+                  <FileDown size={12}/> Generează PDF
+                </button>
+              </div>
+              </>
+            )}
             <button onClick={()=>window.print()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-300 text-[12px] font-semibold hover:bg-zinc-700 transition-all">
               <Printer size={13}/> Print
             </button>
