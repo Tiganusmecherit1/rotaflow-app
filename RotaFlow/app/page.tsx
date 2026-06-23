@@ -1,4 +1,4 @@
-// RotaFlow v3.7 — Fix prag criza < 4 activi — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v3.8 — Rotatie echitabila bazata pe ore acumulate din Iunie — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -255,22 +255,33 @@ function countZileLucratoareReale(s: string, e: string, m: Angajat): number {
 
 const SUPLINITOR_OBJ: Angajat = { id: 999, nume: 'Suplinitor', zileCO: 0, concedii: [], absente: [] };
 
-function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean): { type: string; label: string } {
+function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean, oreAcumulate?: Record<number,number>): { type: string; label: string } {
   const isSup = m.id === 999;
   if (!isSup && inAbsenta(d, m, 'CM')) return { type: 'CM', label: 'CM' };
   if (!isSup && inAbsenta(d, m, 'AN')) return { type: 'AN', label: 'AN' };
   if (!isSup && inCO(d, m)) return { type: 'CO', label: 'CO' };
-
-  // Suplinitorul NU intra in rotatia normala niciodata.
-  // Apare in calendar EXCLUSIV prin override-uri explicite (ex: Duminica din planul de criza).
-  // Fara override -> L (absent).
   if (isSup) return { type: 'L', label: 'L' };
 
-  // Rotatia normala pentru angajatii permanenti
-  // Suplinitorul NU e inclus in ciclu — prezenta lui nu afecteaza pozitia celorlalti
   const activi = toataEchipa.filter(a => !inCO(d,a) && !inAbsenta(d,a,'any'));
   const poz = activi.findIndex(a => a.id === m.id);
   if (poz === -1) return { type: 'L', label: 'L' };
+
+  // Cu 4+ disponibili si ore acumulate disponibile → rotatie bazata pe echitate
+  if (activi.length >= 4 && oreAcumulate && Object.keys(oreAcumulate).length > 0) {
+    // Sortam activii dupa ore acumulate (cel cu mai putine → pozitie mai mica → mai multa prioritate)
+    const activiSortati = [...activi].sort((a,b) => (oreAcumulate[a.id]||0) - (oreAcumulate[b.id]||0));
+    const pozEchitate = activiSortati.findIndex(a => a.id === m.id);
+    const n = activiSortati.length;
+    // Ciclul zilnic: 2D+1S+rest L, rotat zilnic
+    const ref = new Date(2026,0,1);
+    const dayIdx = Math.floor((d.getTime()-ref.getTime())/86400000);
+    const sec = ((dayIdx + pozEchitate) % n + n) % n;
+    if (sec === 0 || sec === 1) return { type: 'D', label: 'D' };
+    if (sec === 2) return { type: 'S', label: 'S' };
+    return { type: 'L', label: 'L' };
+  }
+
+  // Fallback: ciclu fix original (cand nu avem date de ore sau < 4 disponibili)
   const ref = new Date(2026,0,1);
   const dayIdx = Math.floor((d.getTime()-ref.getTime())/86400000);
   const n = activi.length;
@@ -280,21 +291,19 @@ function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActi
   return { type: 'L', label: 'L' };
 }
 
-function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean, swapuri: Swap[], turaOverride: TuraOverride[] = []): { type: string; label: string; swapped?: boolean } {
+function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean, swapuri: Swap[], turaOverride: TuraOverride[] = [], oreAcumulate?: Record<number,number>): { type: string; label: string; swapped?: boolean } {
   const dStr = fmtDateInput(d);
 
-  // CO/CM/AN au prioritate absoluta — nici override-ul de criza nu le suprascrie
+  // CO/CM/AN au prioritate absoluta
   if (m.id !== 999) {
     if (inAbsenta(d, m, 'CM')) return { type: 'CM', label: 'CM' };
     if (inAbsenta(d, m, 'AN')) return { type: 'AN', label: 'AN' };
     if (inCO(d, m)) return { type: 'CO', label: 'CO' };
   }
 
-  // Override de criză — prioritate maxima (dupa CO/CM/AN)
+  // Override de criză
   const override = turaOverride.find(o =>
-    o.angajatId === m.id &&
-    o.data === dStr &&
-    parseD(o.expiraLa) > d
+    o.angajatId === m.id && o.data === dStr && parseD(o.expiraLa) > d
   );
   if (override) return { type: override.tura, label: override.tura, swapped: false };
 
@@ -302,19 +311,13 @@ function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: b
   const swB = swapuri.find(sw => sw.bId===m.id && sw.bData===dStr);
   if (swA) {
     const b = toataEchipa.find(x => x.id===swA.bId);
-    if (b) {
-      const t=getTuraBaza(parseD(swA.bData),b,toataEchipa,suplinitorActiv);
-      if (t.type==='D'||t.type==='S') return {...t,label:t.label+'↔',swapped:true};
-    }
+    if (b) { const t=getTuraBaza(parseD(swA.bData),b,toataEchipa,suplinitorActiv,oreAcumulate); if (t.type==='D'||t.type==='S') return {...t,label:t.label+'↔',swapped:true}; }
   }
   if (swB) {
     const a = toataEchipa.find(x => x.id===swB.aId);
-    if (a) {
-      const t=getTuraBaza(parseD(swB.aData),a,toataEchipa,suplinitorActiv);
-      if (t.type==='D'||t.type==='S') return {...t,label:t.label+'↔',swapped:true};
-    }
+    if (a) { const t=getTuraBaza(parseD(swB.aData),a,toataEchipa,suplinitorActiv,oreAcumulate); if (t.type==='D'||t.type==='S') return {...t,label:t.label+'↔',swapped:true}; }
   }
-  return getTuraBaza(d, m, toataEchipa, suplinitorActiv);
+  return getTuraBaza(d, m, toataEchipa, suplinitorActiv, oreAcumulate);
 }
 
 // Verifica daca un angajat depaseste 48h/saptamana (Art. 114)
@@ -733,7 +736,26 @@ export default function RotaFlow() {
   const suplinitorFinal = suplinitorActiv || suplinitorAutoActiv;
   const modeAvarie = useMemo(() => echipa.some(m => days.some(d => inAbsenta(d,m,'CM'))), [echipa,days]);
 
-  const getTuraW = useCallback((d: Date, m: Angajat) => getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride), [echipa,suplinitorFinal,swapuri,turaOverride]);
+  const oreAcumulate = useMemo((): Record<number, number> => {
+    const perioadaStart = new Date(2026, 5, 1); // 1 Iunie
+    const perioadaEnd = new Date(weekStart.getTime() - 86400000);
+    if (perioadaEnd < perioadaStart) return {};
+    const ore: Record<number, number> = {};
+    echipa.forEach(m => { ore[m.id] = 0; });
+    for (let d = new Date(perioadaStart); d <= perioadaEnd; d = new Date(d.getTime()+86400000)) {
+      const activiAzi = echipa.filter(m => !inCO(d, m) && !inAbsenta(d, m, 'any'));
+      const n = activiAzi.length;
+      if (n === 0) continue;
+      activiAzi.forEach((m, idx) => {
+        const dayIdx = Math.floor((d.getTime() - new Date(2026,0,1).getTime()) / 86400000);
+        const sec = ((dayIdx + idx) % n + n) % n;
+        if (sec <= 2) ore[m.id] = (ore[m.id]||0) + 8;
+      });
+    }
+    return ore;
+  }, [echipa, weekStart]);
+
+  const getTuraW = useCallback((d: Date, m: Angajat) => getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride,oreAcumulate), [echipa,suplinitorFinal,swapuri,turaOverride,oreAcumulate]);
 
   // Alerte ore maxime (Art. 114 — max 48h/saptamana)
   const alerteOre = useMemo(() => {
@@ -749,6 +771,8 @@ export default function RotaFlow() {
   // Alerta personal insuficient — verifica fiecare zi din saptamana afisata daca raman sub 3 activi
   // (acopera CO/CM/AN reale, nu doar in Simulare — sefii vede problema direct in calendarul normal)
   // criticAchiar = chiar si CU suplinitorul activ tot raman sub 3 -> un singur suplinitor nu ajunge
+  // ─── Ore acumulate per angajat din Iunie pana la weekStart (pentru echitate rotatie) ───
+  // Folosim ciclul FIX pentru calculul retrospectiv (evitam circularitate)
   const alertePersonalInsuficient = useMemo(() => {
     const rezultate: { zi: Date; totalActivi: number; criticChiarCuSuplinitor: boolean }[] = [];
     for (let i = 0; i < 7; i++) {
