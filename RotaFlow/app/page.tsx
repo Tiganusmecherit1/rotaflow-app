@@ -285,7 +285,7 @@ function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: b
     o.data === dStr &&
     parseD(o.expiraLa) > d
   );
-  if (override) return { type: override.tura, label: override.tura + '⚡', swapped: false };
+  if (override) return { type: override.tura, label: override.tura, swapped: false };
 
   const swA = swapuri.find(sw => sw.aId===m.id && sw.aData===dStr);
   const swB = swapuri.find(sw => sw.bId===m.id && sw.bData===dStr);
@@ -1024,37 +1024,50 @@ export default function RotaFlow() {
   const aplicaPlanCriza = () => {
     if (!planCriza) return;
 
-    // Noua logica: nu mai activam suplinitorul extern.
-    // Aplicam override-uri pentru turele localilor (S saptamanal rotativ).
-    // Zilele sefului (ziuaSef) sunt marcate in log, nu in rotatie (seful nu e in echipa).
     const noileOverride: TuraOverride[] = [];
     const expiraLa = planCriza.dataPlecareSup;
 
-    planCriza.plan
-      .filter(zi => !zi.ziuaSef) // zilele normale (nu ziua sefului)
-      .forEach(zi => {
-        const d = parseD(zi.data);
+    planCriza.plan.forEach(zi => {
+      if (zi.ziuaSef) {
+        // Duminica — suplinitorul vine (2D+2S), toti localii liberi
+        noileOverride.push({
+          id: `criza_SUP_${zi.data}`,
+          angajatId: 999,
+          data: zi.data,
+          tura: 'D',
+          expiraLa,
+        });
+        echipa.forEach(m => {
+          noileOverride.push({
+            id: `criza_${m.id}_${zi.data}`,
+            angajatId: m.id,
+            data: zi.data,
+            tura: 'L',
+            expiraLa,
+          });
+        });
+      } else {
+        // Zi normala — aplicam direct turele din plan
         echipa.forEach(m => {
           const turaPlan = zi.ture[m.id] as string | undefined;
-          if (!turaPlan || turaPlan === 'L') return;
-          const turaNormala = getTuraBaza(d, m, echipa, suplinitorFinal);
-          if (turaPlan !== turaNormala.type) {
-            noileOverride.push({
-              id: `criza_${m.id}_${zi.data}`,
-              angajatId: m.id,
-              data: zi.data,
-              tura: turaPlan as 'D'|'S'|'L',
-              expiraLa,
-            });
-          }
+          if (!turaPlan) return;
+          noileOverride.push({
+            id: `criza_${m.id}_${zi.data}`,
+            angajatId: m.id,
+            data: zi.data,
+            tura: turaPlan as 'D'|'S'|'L',
+            expiraLa,
+          });
         });
-      });
+      }
+    });
 
+    setSuplinitorActiv(true);
     setCrizaAplicataInterval({ start: planCriza.dataStart, end: planCriza.dataPlecareSup });
     setTuraOverride(prev => [...prev.filter(o => !o.id.startsWith('criza_')), ...noileOverride]);
 
-    const zileSef = planCriza.plan.filter(zi => zi.ziuaSef).map(zi => fmtDate(parseD(zi.data))).join(', ');
-    addLog(`Plan Criză aplicat: ${noileOverride.length} override-uri tură până la ${expiraLa}. Zile suplinitori Cta: ${zileSef}`);
+    const zileSup = planCriza.plan.filter(zi => zi.ziuaSef).map(zi => fmtDate(parseD(zi.data))).join(', ');
+    addLog(`Plan Criză aplicat: ${noileOverride.length} override-uri până la ${expiraLa}. Suplinitori Duminica: ${zileSup}`);
     setShowPlanCriza(false);
   };
 
