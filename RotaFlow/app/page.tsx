@@ -1,4 +1,4 @@
-// RotaFlow v3.1 — Saptamana compensare post-CO — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v3.2 — Fix saptamana compensare + turaPrev corect — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -1161,12 +1161,13 @@ export default function RotaFlow() {
       });
     }
 
-    // Override saptamana de compensare: saptamana completa dupa criza
+    // Override saptamana de compensare: saptamana URMATOARE dupa criza
+    // (nu saptamana care contine ziuaDupaUltima — aceea poate overlap cu criza)
     // Reveniții din CO au prioritate la ture (target 40h),
     // cei care au muncit in criza au prioritate la libere (target 32h)
     {
-      const luniComp = getMonday(ziuaDupaUltima);
-      const sfComp = new Date(luniComp.getTime() + 6 * 86400000); // Duminica
+      const luniComp = new Date(getMonday(ziuaDupaUltima).getTime() + 7 * 86400000);
+      const sfComp = new Date(luniComp.getTime() + 6 * 86400000);
       const expiraComp = fmtDateInput(new Date(luniComp.getTime() + 7 * 86400000));
 
       const reveniti = echipa.filter(m =>
@@ -1185,11 +1186,17 @@ export default function RotaFlow() {
       const oreAcc: Record<number, number> = {};
       echipa.forEach(m => { oreAcc[m.id] = 0; });
 
+      // Tura din Duminica DINAINTEA saptamanii de compensare (ziua precedenta lui luniComp)
+      const ziDuDinainteSapt = new Date(luniComp.getTime() - 86400000);
       const turaPrevComp: Record<number, string> = {};
       echipa.forEach(m => {
-        // Tura din ziua tranzitiei (deja calculata in override-uri)
-        const ovTranz = noileOverride.find(o => o.angajatId === m.id && o.data === fmtDateInput(ziuaDupaUltima));
-        turaPrevComp[m.id] = ovTranz?.tura ?? getTuraBaza(ziuaDupaUltima, m, echipa, false).type;
+        // Cautam override activ pentru acea zi, altfel rotatie normala
+        const ovPrev = noileOverride.find(o =>
+          o.angajatId === m.id &&
+          o.data === fmtDateInput(ziDuDinainteSapt) &&
+          parseD(o.expiraLa) > ziDuDinainteSapt
+        );
+        turaPrevComp[m.id] = ovPrev?.tura ?? getTuraBaza(ziDuDinainteSapt, m, echipa, false).type;
       });
 
       for (let i = 0; i < 7; i++) {
