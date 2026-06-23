@@ -1,4 +1,4 @@
-// RotaFlow v3.9 — Drag & Drop manual ture in rotatie — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v4.0 — Fix S->D complet drag&drop (toate 4 cazuri) — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -1086,31 +1086,40 @@ export default function RotaFlow() {
     const turaDest = getTuraW(d, destAngajat);
     const dStr = src.data;
 
-    // Validari
-    // 1. Nu putem muta CO/CM/AN
-    if (['CO','CM','AN'].includes(src.tura)) {
-      setDragError(`${srcAngajat.nume} este în ${src.tura} — nu se poate muta`);
-      setTimeout(() => setDragError(null), 3000); return;
+    // Validari S->D complete — verificam toate cele 4 cazuri:
+    const ziPrev = new Date(d.getTime() - 86400000);
+    const ziUrm  = new Date(d.getTime() + 86400000);
+    const turaPrevSrc  = getTuraW(ziPrev, srcAngajat).type;
+    const turaPrevDest = getTuraW(ziPrev, destAngajat).type;
+    const turaUrmSrc   = getTuraW(ziUrm,  srcAngajat).type;
+    const turaUrmDest  = getTuraW(ziUrm,  destAngajat).type;
+
+    // Dupa swap: src va avea turaDest, dest va avea src.tura
+    const turaSrcNou  = turaDest.type.replace('↔','');
+    const turaDestNou = src.tura;
+
+    // Caz 1: dest primeste src.tura=D dupa ce ieri a facut S
+    if (turaDestNou === 'D' && turaPrevDest === 'S') {
+      setDragError(`S→D interzis: ${destAngajat.nume} a făcut S ieri`);
+      setTimeout(()=>setDragError(null),3000); return;
     }
-    // 2. Nu putem pune o tura pe cineva in CO/CM/AN
-    if (['CO','CM','AN'].includes(turaDest.type)) {
-      setDragError(`${destAngajat.nume} este în ${turaDest.type} — nu poate prelua tură`);
-      setTimeout(() => setDragError(null), 3000); return;
+    // Caz 2: src primeste turaDest=D dupa ce ieri a facut S
+    if (turaSrcNou === 'D' && turaPrevSrc === 'S') {
+      setDragError(`S→D interzis: ${srcAngajat.nume} a făcut S ieri`);
+      setTimeout(()=>setDragError(null),3000); return;
     }
-    // 3. Verifica S->D pentru dest (daca primeste D, ziua precedenta nu trebuie sa fie S)
-    if (src.tura === 'D') {
-      const ziPrev = new Date(d.getTime() - 86400000);
-      const turaPrevDest = getTuraW(ziPrev, destAngajat);
-      if (turaPrevDest.type === 'S') {
-        setDragError(`S→D interzis: ${destAngajat.nume} a facut S ieri`);
-        setTimeout(() => setDragError(null), 3000); return;
-      }
+    // Caz 3: dest primeste src.tura=S si maine face D
+    if (turaDestNou === 'S' && turaUrmDest === 'D') {
+      setDragError(`S→D interzis: ${destAngajat.nume} face D mâine`);
+      setTimeout(()=>setDragError(null),3000); return;
     }
-    // 4. Verifica S->D pentru src (daca pleaca din D, maine nu trebuie sa fie S pentru el)
-    if (turaDest.type === 'D' && src.tura === 'L') {
-      // src primeste L (liber), maine poate face orice — ok
+    // Caz 4: src primeste turaDest=S si maine face D
+    if (turaSrcNou === 'S' && turaUrmSrc === 'D') {
+      setDragError(`S→D interzis: ${srcAngajat.nume} face D mâine`);
+      setTimeout(()=>setDragError(null),3000); return;
     }
-    // 5. Verifica 48h pentru dest
+
+    // Verifica 48h pentru dest (primeste o tura activa in loc de L)
     const oreDest = calcOreSaptamana(destAngajat, weekStart, echipa, suplinitorFinal, swapuri, turaOverride);
     if (['D','S'].includes(src.tura) && !['D','S'].includes(turaDest.type)) {
       if (oreDest + 8 > 48) {
