@@ -1,4 +1,4 @@
-// RotaFlow v2.9 — Fix 10Aug zi normala — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v3.0 — Tranzitie fair dupa criza — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -1081,46 +1081,82 @@ export default function RotaFlow() {
     });
 
     // Override de tranzitie: ziua dupa criza
-    // 1. Cel care a facut S in ultima zi → L obligatoriu (S->D interzis)
-    // 2. Angajatii care revin din CO in ziua urmatoare → intra la tura (D)
-    //    deoarece rotatia normala ii poate pune pe L (ciclu defazat dupa absenta)
+    // Regula: cei care au muncit in criza primesc libere, cei din CO intra la tura
     const ultimaZiPlan = planCriza.plan.filter(z => !z.ziuaSef).pop();
     if (ultimaZiPlan) {
       const dataTransitie = fmtDateInput(ziuaDupaUltima);
       const expiraTransitie = fmtDateInput(new Date(ziuaDupaUltima.getTime() + 86400000));
 
-      // Cine a facut S in ultima zi → L in ziua tranzitiei
+      // Calculam ore lucrate in criza pentru fiecare local activ
+      const oreInCriza: Record<number, number> = {};
       echipa.forEach(m => {
-        const turaUltima = ultimaZiPlan.ture[m.id] as string | undefined;
-        if (turaUltima === 'S') {
+        oreInCriza[m.id] = planCriza.plan.reduce((acc, zi) => {
+          const t = zi.ture[m.id] as string | undefined;
+          return acc + (t === 'D' || t === 'S' ? 8 : 0);
+        }, 0);
+      });
+
+      // Cei care revin din CO in ziua tranzitiei
+      const revinDinCO = echipa.filter(m =>
+        inCO(parseD(planCriza.dataPlecareSup), m) && !inCO(ziuaDupaUltima, m)
+      );
+
+      // Cei care au muncit in criza (activi in criza, nu in CO)
+      const auMuncitInCriza = echipa.filter(m =>
+        !inCO(parseD(planCriza.dataStart), m) && oreInCriza[m.id] > 0
+      );
+
+      // Sortam dupa ore descrescator — cei mai obositi primii la liber
+      auMuncitInCriza.sort((a, b) => (oreInCriza[b.id] || 0) - (oreInCriza[a.id] || 0));
+
+      // Avem nevoie de 2D+1S pe ziua tranzitiei
+      // Cei din CO intra obligatoriu + cel putin 1 local continua
+      const nrNecesar = 3; // 2D+1S = 3 oameni
+      const nrRevin = revinDinCO.length;
+      const nrLocaliNecesari = Math.max(0, nrNecesar - nrRevin);
+
+      // Cei care iau liber: toti localii obositi minus cei necesari
+      // + cel cu S in ultima zi (S->D interzis)
+      const auFacutS = auMuncitInCriza.filter(m => {
+        const t = ultimaZiPlan.ture[m.id] as string | undefined;
+        return t === 'S';
+      });
+
+      const liberiTranzitie = new Set<number>();
+      // 1. Fortat liber: cel cu S ieri
+      auFacutS.forEach(m => liberiTranzitie.add(m.id));
+
+      // 2. Meritat liber: localii obositi (cei cu mai multe ore), pastram doar nrLocaliNecesari
+      let localiDisponibili = auMuncitInCriza.filter(m =>
+        !liberiTranzitie.has(m.id) && !auFacutS.some(s => s.id === m.id)
+      );
+      // Pastram primii nrLocaliNecesari, restul iau liber
+      localiDisponibili.slice(nrLocaliNecesari).forEach(m => liberiTranzitie.add(m.id));
+
+      // Aplicam override-uri de tranzitie
+      // Liberi
+      liberiTranzitie.forEach(id => {
+        noileOverride.push({
+          id: `criza_tranzitie_${id}_${dataTransitie}`,
+          angajatId: id,
+          data: dataTransitie,
+          tura: 'L',
+          expiraLa: expiraTransitie,
+        });
+      });
+
+      // Cei din CO care revin si rotatia normala ii pune pe L → D
+      revinDinCO.forEach(m => {
+        const tNormala = getTuraBaza(ziuaDupaUltima, m, echipa, false);
+        const areOverride = noileOverride.some(o => o.angajatId === m.id && o.data === dataTransitie);
+        if (tNormala.type === 'L' && !areOverride) {
           noileOverride.push({
             id: `criza_tranzitie_${m.id}_${dataTransitie}`,
             angajatId: m.id,
             data: dataTransitie,
-            tura: 'L',
+            tura: 'D',
             expiraLa: expiraTransitie,
           });
-        }
-      });
-
-      // Angajatii care revin din CO exact in ziua tranzitiei → D
-      // (daca rotatia normala ii pune pe L din cauza ciclului defazat)
-      echipa.forEach(m => {
-        const eraInCO = inCO(parseD(planCriza.dataPlecareSup), m);
-        const revineAzi = !inCO(ziuaDupaUltima, m);
-        if (eraInCO && revineAzi) {
-          // Verifica daca rotatia normala il pune pe L
-          const turaLorNormala = getTuraBaza(ziuaDupaUltima, m, echipa, false);
-          const areDejaOverride = noileOverride.some(o => o.angajatId === m.id && o.data === dataTransitie);
-          if (turaLorNormala.type === 'L' && !areDejaOverride) {
-            noileOverride.push({
-              id: `criza_tranzitie_${m.id}_${dataTransitie}`,
-              angajatId: m.id,
-              data: dataTransitie,
-              tura: 'D',
-              expiraLa: expiraTransitie,
-            });
-          }
         }
       });
     }
