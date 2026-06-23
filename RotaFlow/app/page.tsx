@@ -254,21 +254,25 @@ function countZileLucratoareReale(s: string, e: string, m: Angajat): number {
 
 const SUPLINITOR_OBJ: Angajat = { id: 999, nume: 'Suplinitor', zileCO: 0, concedii: [], absente: [] };
 
-function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean): { type: string; label: string } {
+function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean, crizaInterval?: {start: string; end: string}): { type: string; label: string } {
   const isSup = m.id === 999;
   if (!isSup && inAbsenta(d, m, 'CM')) return { type: 'CM', label: 'CM' };
   if (!isSup && inAbsenta(d, m, 'AN')) return { type: 'AN', label: 'AN' };
   if (!isSup && inCO(d, m)) return { type: 'CO', label: 'CO' };
 
-  // Suplinitorul lucreaza 6 zile/sapt (5D + 1S + 1L) = 48h legal exact.
-  // Pattern saptamanal: D,D,D,D,D,S,L — S e urmata de L, deci niciodata S->D direct.
-  // Calculam de la inceputul saptamanii calendaristice (Luni=0) ca sa fie consistent.
-  if (isSup && suplinitorActiv) {
-    const wd = d.getDay(); // 0=Du,1=Lu...6=Sa
-    const idx = wd === 0 ? 6 : wd - 1; // Lu=0, Ma=1, ... Du=6
-    const pattern = ['D','D','D','D','D','S','L']; // Lu-Vi=D, Sa=S, Du=L
-    const t = pattern[idx];
-    return { type: t, label: t };
+  // Suplinitorul lucreaza 6 zile/sapt (5D + 1S + 1L) = 48h legal exact,
+  // DAR NUMAI pe durata crizei active. In afara intervalului, intra in rotatia normala.
+  if (isSup && suplinitorActiv && crizaInterval) {
+    const crizaStart = parseD(crizaInterval.start);
+    const crizaEnd = parseD(crizaInterval.end);
+    crizaEnd.setHours(23,59,59);
+    if (d >= crizaStart && d <= crizaEnd) {
+      const wd = d.getDay(); // 0=Du, 1=Lu...6=Sa
+      const idx = wd === 0 ? 6 : wd - 1; // Lu=0...Du=6
+      const pattern = ['D','D','D','D','D','S','L'];
+      const t = pattern[idx];
+      return { type: t, label: t };
+    }
   }
 
   const activi = toataEchipa.filter(a => !inCO(d,a) && !inAbsenta(d,a,'any'));
@@ -284,11 +288,10 @@ function getTuraBaza(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActi
   return { type: 'L', label: 'L' };
 }
 
-function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean, swapuri: Swap[], turaOverride: TuraOverride[] = []): { type: string; label: string; swapped?: boolean } {
+function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: boolean, swapuri: Swap[], turaOverride: TuraOverride[] = [], crizaInterval?: {start: string; end: string}): { type: string; label: string; swapped?: boolean } {
   const dStr = fmtDateInput(d);
 
   // Override de criză — are prioritate maximă, mai mare decât swap-urile normale
-  // Se aplică doar dacă nu a expirat (data curentă < expiraLa)
   const override = turaOverride.find(o =>
     o.angajatId === m.id &&
     o.data === dStr &&
@@ -301,18 +304,18 @@ function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: b
   if (swA) {
     const b = toataEchipa.find(x => x.id===swA.bId);
     if (b) {
-      const t=getTuraBaza(parseD(swA.bData),b,toataEchipa,suplinitorActiv);
+      const t=getTuraBaza(parseD(swA.bData),b,toataEchipa,suplinitorActiv,crizaInterval);
       if (t.type==='D'||t.type==='S') return {...t,label:t.label+'↔',swapped:true};
     }
   }
   if (swB) {
     const a = toataEchipa.find(x => x.id===swB.aId);
     if (a) {
-      const t=getTuraBaza(parseD(swB.aData),a,toataEchipa,suplinitorActiv);
+      const t=getTuraBaza(parseD(swB.aData),a,toataEchipa,suplinitorActiv,crizaInterval);
       if (t.type==='D'||t.type==='S') return {...t,label:t.label+'↔',swapped:true};
     }
   }
-  return getTuraBaza(d, m, toataEchipa, suplinitorActiv);
+  return getTuraBaza(d, m, toataEchipa, suplinitorActiv, crizaInterval);
 }
 
 // Verifica daca un angajat depaseste 48h/saptamana (Art. 114)
@@ -359,23 +362,27 @@ function getTuraSim(d: Date, m: Angajat, toataEchipa: Angajat[], simConcedii: Si
 interface ConformitateIssue { tip: 'PUTINI_OAMENI' | 'ORE_MAXIME'; data: string; detalii: string }
 
 // ─── Plan de Criza ───
+// Optiunea 4: Un local face S o saptamana intreaga (rotativ).
+// Seful din Constanta vine 1 zi/sapt (Sa preferabil): 2D+2S, toti localii liberi.
+// Tranzitia S->D se face in ziua sefului (zi libera = zero S->D niciodata).
 interface PlanCrizaZi {
-  data: string; // YYYY-MM-DD
-  ture: Record<number | 'SUP', 'D' | 'S' | 'L'>;
-  cuSuplinitor: boolean;
+  data: string;
+  ture: Record<number | 'SUP', 'D' | 'S' | 'L' | '2D+2S'>;
+  ziuaSef: boolean;
+  omS: number; // id-ul localului care face S in aceasta saptamana
 }
 interface PlanCriza {
   dataStart: string;
-  dataPlecareSup: string; // prima zi fara suplinitor
+  dataPlecareSup: string; // refolosit ca "data sfarsit criza" (ultima zi planificata)
   zileTotal: number;
-  zileCuSup: number;
+  zileCuSup: number; // numarul de vizite ale sefului
   plan: PlanCrizaZi[];
 }
 
 function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim: SimConcediu[] = [], simIssues: ConformitateIssue[] = []): PlanCriza | null {
   const dataStart = parseD(dataStartStr);
 
-  // Verifica daca un angajat e absent (CO real SAU CO simulat)
+  // Angajatii locali activi (fara sef, fara cei in CO/CM/AN sau CO simulat)
   const eAbsent = (m: Angajat, d: Date) => {
     if (inCO(d, m) || inAbsenta(d, m, 'any')) return true;
     return concediiSim.some(sc => {
@@ -386,125 +393,99 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
     });
   };
 
-  // Determinam data plecarii suplinitorului in functie de tipul problemei:
-  // - PUTINI_OAMENI: suplinitorul pleaca cand revin suficienti angajati (4+ activi)
-  // - ORE_MAXIME: suplinitorul pleaca la sfarsitul perioadei cu depasiri de ore
-  let dataPlecareSup: Date | null = null;
+  const activiStart = echipa.filter(m => !eAbsent(m, dataStart));
+  if (activiStart.length < 2) return null;
 
-  const areProblemeOre = simIssues.some(i => i.tip === 'ORE_MAXIME');
-  const areProblemePutini = simIssues.some(i => i.tip === 'PUTINI_OAMENI');
-
-  if (areProblemeOre && !areProblemePutini) {
-    // Luam ultima zi cu probleme de ore din simIssues, suplinitorul pleaca a doua zi
-    const dateProbleme = simIssues
-      .filter(i => i.tip === 'ORE_MAXIME')
-      .map(i => parseD(i.data))
-      .sort((a,b) => b.getTime() - a.getTime());
-    if (dateProbleme.length > 0) {
-      // Sfarsitul saptamanii cu probleme (Duminica saptamanii celei mai tardive)
-      const ultimaSapt = dateProbleme[0];
-      const duminicaSapt = new Date(ultimaSapt.getTime() + (7 - ultimaSapt.getDay()) * 86400000);
-      dataPlecareSup = new Date(duminicaSapt.getTime() + 86400000); // Luni dupa ultima saptamana cu probleme
+  // Determinam durata crizei: pana cand revin suficienti angajati (4+ activi)
+  // sau maxim 4 saptamani
+  let dataEnd: Date = new Date(dataStart.getTime() + 28 * 86400000);
+  for (let i = 1; i < 28; i++) {
+    const d = new Date(dataStart.getTime() + i * 86400000);
+    const activi = echipa.filter(m => !eAbsent(m, d));
+    if (activi.length >= 4) {
+      // Terminam la sfarsitul saptamanii curente
+      const lu = getMonday(d);
+      dataEnd = new Date(lu.getTime() + 6 * 86400000); // Duminica saptamanii
+      break;
     }
   }
-
-  if (!dataPlecareSup) {
-    // PUTINI_OAMENI sau fallback: suplinitorul pleaca cand revin 4+ activi
-    for (let i = 0; i < 90; i++) {
-      const d = new Date(dataStart.getTime() + i * 86400000);
-      const activi = echipa.filter(m => !eAbsent(m, d));
-      if (activi.length >= 4) { dataPlecareSup = d; break; }
-    }
-  }
-
-  if (!dataPlecareSup) return null;
-
-  // Perioadele: faza criza (cu SUP) + faza recuperare (fara SUP, cu 4+ activi)
-  // Determinam data de sfarsit a recuperarii (cand revine al 2-lea angajat sau 14 zile max dupa plecare sup)
-  const dataEndRecuperare = new Date(dataPlecareSup.getTime() + 14 * 86400000);
 
   const plan: PlanCrizaZi[] = [];
-  const turaAnterioara: Partial<Record<number | 'SUP', string>> = {};
-  const oreSapt: Partial<Record<number | 'SUP', number>> = {};
-  let saptamanaLuni: string | null = null;
+  let rotatieSIdx = 0; // index in activiStart pentru cine face S
 
-  for (let i = 0; ; i++) {
-    const d = new Date(dataStart.getTime() + i * 86400000);
-    if (d > dataEndRecuperare) break;
+  let d = new Date(dataStart);
+  const saptamaniProcesate = new Set<string>();
 
-    // Reset ore la inceput de saptamana calendaristica (Luni)
+  while (d <= dataEnd) {
     const lu = getMonday(d);
     const luStr = fmtDateInput(lu);
-    if (luStr !== saptamanaLuni) {
-      saptamanaLuni = luStr;
-      Object.keys(oreSapt).forEach(k => (oreSapt as Record<string, number>)[k] = 0);
+    if (saptamaniProcesate.has(luStr)) {
+      d = new Date(d.getTime() + 86400000);
+      continue;
+    }
+    saptamaniProcesate.add(luStr);
+
+    // Zilele acestei saptamani in intervalul crizei
+    const zileSapt: Date[] = [];
+    for (let i = 0; i < 7; i++) {
+      const zi = new Date(lu.getTime() + i * 86400000);
+      if (zi >= dataStart && zi <= dataEnd) zileSapt.push(zi);
     }
 
-    const cuSuplinitor = d < dataPlecareSup;
-    const activiAzi = echipa
-      .filter(m => !eAbsent(m, d))
-      .map(m => m.id);
+    const zileWE = zileSapt.filter(z => z.getDay() === 0 || z.getDay() === 6);
+    const zileLV = zileSapt.filter(z => z.getDay() >= 1 && z.getDay() <= 5);
 
-    const toatiIds: (number | 'SUP')[] = [...activiAzi, ...(cuSuplinitor ? ['SUP' as const] : [])];
+    // Ziua suplinitorului: DUMINICA (vin dimineata, fac 2D+2S, pleaca noaptea)
+    // Sambata = zi libera pentru toti localii (zi de tranzitie, elimina S->D)
+    const ziuaSup = zileWE.find(z => z.getDay() === 0) ?? zileSapt[zileSapt.length - 1];
+    // Sambata: toti localii liberi (tranzitie intre rotatii)
+    const ziuaSa = zileWE.find(z => z.getDay() === 6);
 
-    // Initializare
-    toatiIds.forEach(aid => {
-      if (oreSapt[aid] === undefined) oreSapt[aid] = 0;
-      if (turaAnterioara[aid] === undefined) turaAnterioara[aid] = 'L';
-    });
+    // Cine face S aceasta saptamana
+    const omS = activiStart[rotatieSIdx % activiStart.length].id;
+    // Cine face S saptamana urmatoare (incepe Duminica)
+    const omSUrmator = activiStart[(rotatieSIdx + 1) % activiStart.length].id;
+    rotatieSIdx++;
 
-    const ture: Record<number | 'SUP', 'D' | 'S' | 'L'> = {} as Record<number | 'SUP', 'D' | 'S' | 'L'>;
+    const omD = activiStart.map(m => m.id).filter(id => id !== omS);
+    const omDUrmator = activiStart.map(m => m.id).filter(id => id !== omSUrmator);
 
-    // Suplinitorul: preferam D, respectam 48h si regula S->D
-    if (cuSuplinitor) {
-      if (turaAnterioara['SUP'] !== 'S' && (oreSapt['SUP'] || 0) + 8 <= 48) {
-        ture['SUP'] = 'D';
-      } else if ((oreSapt['SUP'] || 0) + 8 <= 48) {
-        ture['SUP'] = 'S';
+    for (const zi of zileSapt) {
+      const ture: Record<number | 'SUP', 'D' | 'S' | 'L' | '2D+2S'> = {} as Record<number | 'SUP', 'D' | 'S' | 'L' | '2D+2S'>;
+      echipa.forEach(m => { ture[m.id] = 'L'; });
+      ture['SUP'] = 'L';
+
+      let ziuaSupFlag = false;
+
+      if (fmtDateInput(zi) === fmtDateInput(ziuaSup)) {
+        // Duminica: suplinitorul vine, face 2D+2S, toti localii liberi
+        // Aceasta e si prima zi a noii rotatii (noul om_S incepe luni)
+        ture['SUP'] = '2D+2S';
+        ziuaSupFlag = true;
+      } else if (ziuaSa && fmtDateInput(zi) === fmtDateInput(ziuaSa)) {
+        // Sambata: zi libera pentru toti localii (tranzitie intre rotatii)
+        // Niciun local nu lucreaza — suplinitorul NU vine sambata
+        // -> Acoperire redusa sambata (0 posturi locale), dar e ziua de odihna/tranzitie
+        // Optiune: daca vrei acoperire sambata, pune omS sa lucreze si sambata
+        ture[omS] = 'S'; // omS (cel care termina saptamana) face inca S sambata
+        omD.forEach(id => { ture[id] = 'D'; }); // ceilalti fac D
       } else {
-        ture['SUP'] = 'L';
+        // Zi normala Lu-Vi: om_S face S, om_D fac D
+        ture[omS] = 'S';
+        omD.forEach(id => { ture[id] = 'D'; });
       }
+
+      plan.push({ data: fmtDateInput(zi), ture: ture as Record<number | 'SUP', 'D' | 'S' | 'L' | '2D+2S'>, ziuaSef: ziuaSupFlag, omS });
     }
 
-    const turaSup = ture['SUP'] || 'L';
-    const nevoieD = 2 - (turaSup === 'D' ? 1 : 0);
-    const nevoieS = 1 - (turaSup === 'S' ? 1 : 0);
-
-    // Localii: sortam dupa ore lucrate (echitate), respectam S->D si 48h
-    const potD = activiAzi
-      .filter(a => turaAnterioara[a] !== 'S' && (oreSapt[a] || 0) + 8 <= 48)
-      .sort((a, b) => (oreSapt[a] || 0) - (oreSapt[b] || 0));
-    const alesiD = potD.slice(0, nevoieD);
-
-    const potS = activiAzi
-      .filter(a => !alesiD.includes(a) && (oreSapt[a] || 0) + 8 <= 48)
-      .sort((a, b) => (oreSapt[a] || 0) - (oreSapt[b] || 0));
-    const alesiS = potS.slice(0, nevoieS);
-
-    activiAzi.forEach(a => {
-      ture[a] = alesiD.includes(a) ? 'D' : alesiS.includes(a) ? 'S' : 'L';
-    });
-
-    // Angajatii in CO/CM apar L
-    echipa.forEach(m => {
-      if (!(m.id in ture)) ture[m.id] = 'L';
-    });
-
-    plan.push({ data: fmtDateInput(d), ture, cuSuplinitor });
-
-    // Actualizam starea
-    toatiIds.forEach(aid => {
-      const t = ture[aid] || 'L';
-      turaAnterioara[aid] = t;
-      if (t === 'D' || t === 'S') oreSapt[aid] = (oreSapt[aid] || 0) + 8;
-    });
+    d = new Date(lu.getTime() + 7 * 86400000);
   }
 
   return {
     dataStart: dataStartStr,
-    dataPlecareSup: fmtDateInput(dataPlecareSup),
+    dataPlecareSup: fmtDateInput(dataEnd),
     zileTotal: plan.length,
-    zileCuSup: plan.filter(p => p.cuSuplinitor).length,
+    zileCuSup: plan.filter(p => p.ziuaSef).length,
     plan,
   };
 }
@@ -606,6 +587,7 @@ export default function RotaFlow() {
   const [planCrizaStart, setPlanCrizaStart] = useState(fmtDateInput(new Date()));
   const [planCrizaIssues, setPlanCrizaIssues] = useState<ConformitateIssue[]>([]);
   const [planCrizaSimConcedii, setPlanCrizaSimConcedii] = useState<SimConcediu[]>([]);
+  const [crizaAplicataInterval, setCrizaAplicataInterval] = useState<{start: string; end: string} | null>(null);
   const [editIdx, setEditIdx] = useState<number|null>(null);
   const [tempNume, setTempNume] = useState('');
   const [urgTip, setUrgTip] = useState<'CM'|'AN'>('CM');
@@ -619,7 +601,6 @@ export default function RotaFlow() {
   const [swNota, setSwNota] = useState('');
   const [lunaOffset, setLunaOffset] = useState(0);
 
-  // ─── Raport Echitate ───
   const [echitatePerioada, setEchitatePerioada] = useState<'luna'|'trimestru'|'an'|'custom'>('an');
   const [echitateCustomStart, setEchitateCustomStart] = useState(fmtDateInput(new Date(new Date().getFullYear(),0,1)));
   const [echitateCustomEnd, setEchitateCustomEnd] = useState(fmtDateInput(new Date()));
@@ -741,7 +722,7 @@ export default function RotaFlow() {
   const suplinitorFinal = suplinitorActiv || suplinitorAutoActiv;
   const modeAvarie = useMemo(() => echipa.some(m => days.some(d => inAbsenta(d,m,'CM'))), [echipa,days]);
 
-  const getTuraW = useCallback((d: Date, m: Angajat) => getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride), [echipa,suplinitorFinal,swapuri,turaOverride]);
+  const getTuraW = useCallback((d: Date, m: Angajat) => getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride,crizaAplicataInterval ?? undefined), [echipa,suplinitorFinal,swapuri,turaOverride,crizaAplicataInterval]);
 
   // Alerte ore maxime (Art. 114 — max 48h/saptamana)
   const alerteOre = useMemo(() => {
@@ -1044,42 +1025,37 @@ export default function RotaFlow() {
   const aplicaPlanCriza = () => {
     if (!planCriza) return;
 
-    // 1. Activam suplinitorul
-    setSuplinitorActiv(true);
-
-    // 2. Generam override-uri pentru colegii locali, doar pe zilele cu tură diferita fata de rotatie normala
-    // Acoperim doar faza de criza (cu suplinitor), nu si recuperarea
+    // Noua logica: nu mai activam suplinitorul extern.
+    // Aplicam override-uri pentru turele localilor (S saptamanal rotativ).
+    // Zilele sefului (ziuaSef) sunt marcate in log, nu in rotatie (seful nu e in echipa).
     const noileOverride: TuraOverride[] = [];
-    const expiraLa = planCriza.dataPlecareSup; // override-urile expira cand pleaca suplinitorul
+    const expiraLa = planCriza.dataPlecareSup;
 
     planCriza.plan
-      .filter(zi => zi.cuSuplinitor) // doar zilele de criza, nu recuperarea
+      .filter(zi => !zi.ziuaSef) // zilele normale (nu ziua sefului)
       .forEach(zi => {
         const d = parseD(zi.data);
         echipa.forEach(m => {
-          const turaPlan = zi.ture[m.id];
-          if (!turaPlan) return;
-          // Calculam tura normala (fara override) ca sa vedem daca planul difera
-          const turaNormala = getTuraBaza(d, m, echipa, true); // cu suplinitor activ
+          const turaPlan = zi.ture[m.id] as string | undefined;
+          if (!turaPlan || turaPlan === 'L') return;
+          const turaNormala = getTuraBaza(d, m, echipa, suplinitorFinal, crizaAplicataInterval ?? undefined);
           if (turaPlan !== turaNormala.type) {
             noileOverride.push({
               id: `criza_${m.id}_${zi.data}`,
               angajatId: m.id,
               data: zi.data,
-              tura: turaPlan,
+              tura: turaPlan as 'D'|'S'|'L',
               expiraLa,
             });
           }
         });
       });
 
-    setTuraOverride(prev => {
-      // Stergem eventuale override-uri vechi de criza pentru aceeasi perioada
-      const filtrate = prev.filter(o => !o.id.startsWith('criza_'));
-      return [...filtrate, ...noileOverride];
-    });
+    setCrizaAplicataInterval({ start: planCriza.dataStart, end: planCriza.dataPlecareSup });
+    setTuraOverride(prev => [...prev.filter(o => !o.id.startsWith('criza_')), ...noileOverride]);
 
-    addLog(`Plan Criză aplicat: suplinitor activ, ${noileOverride.length} override-uri de tură până la ${expiraLa}`);
+    const zileSef = planCriza.plan.filter(zi => zi.ziuaSef).map(zi => fmtDate(parseD(zi.data))).join(', ');
+    addLog(`Plan Criză aplicat: ${noileOverride.length} override-uri tură până la ${expiraLa}. Zile suplinitori Cta: ${zileSef}`);
     setShowPlanCriza(false);
   };
 
@@ -1238,8 +1214,75 @@ export default function RotaFlow() {
     addLog(`Raport Echitate exportat: ${perioadaLabel} (${intervalLabel})`);
   };
 
+  const generateOrePDF = () => {
+    const doc = new jsPDF({ orientation: 'landscape' });
+    const luna = fmtMonth(weekStart);
+    const saptLabel = `${fmtDate(weekStart)} - ${fmtDate(new Date(weekStart.getTime()+6*86400000))}`;
+
+    doc.setFontSize(16); doc.setTextColor(0,120,212);
+    doc.text(faraDiacritice('RotaFlow — Pontaj Ore & Suplimentare'), 14, 14);
+    doc.setFontSize(9); doc.setTextColor(100,100,100);
+    doc.text(faraDiacritice(`Saptamana: ${saptLabel}  |  Luna: ${luna}  |  Generat: ${fmtTs(new Date())}`), 14, 20);
+
+    autoTable(doc, {
+      head: [['Angajat', 'Ore sapt.', 'Norma sapt.', 'Ore supl. sapt.', 'Ore luna', 'Zile lucrate luna', 'Ore supl. luna', 'Depasire 48h?']],
+      body: tabelOre.map(r => [
+        faraDiacritice(r.angajat.nume),
+        `${r.oreSapt}h`,
+        '40h',
+        r.oreSuplSapt > 0 ? `+${r.oreSuplSapt}h` : '0h',
+        `${r.oreLuna}h`,
+        r.zileLucrateLuna.toString(),
+        r.oreSuplLuna > 0 ? `+${r.oreSuplLuna}h` : '0h',
+        r.depaseste ? 'DA - ATENTIE!' : 'Nu',
+      ]),
+      startY: 26,
+      styles: { fontSize: 9, cellPadding: 3 },
+      headStyles: { fillColor: [0, 120, 212] },
+      columnStyles: { 0: { fontStyle: 'bold' } },
+      didParseCell: (data) => {
+        if (data.column.index === 7 && data.cell.raw === 'DA - ATENTIE!') {
+          data.cell.styles.textColor = [185, 28, 28];
+          data.cell.styles.fontStyle = 'bold';
+        }
+        if ((data.column.index === 3 || data.column.index === 6) && String(data.cell.raw).startsWith('+')) {
+          data.cell.styles.textColor = [194, 65, 12];
+          data.cell.styles.fontStyle = 'bold';
+        }
+      }
+    });
+
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
+    doc.setFontSize(8); doc.setTextColor(120,120,120);
+    doc.text(faraDiacritice('Norma saptamanala: 40h | Ore suplimentare = ore lucrate - 40h | Depasire legala: >48h/sapt (Art. 114 Codul Muncii)'), 14, finalY);
+
+    doc.save(`RotaFlow_Ore_Suplimentare_${luna.replace(' ','_')}.pdf`);
+    addLog(`Pontaj ore exportat: ${luna}`);
+  };
+
   const displayEchipa = useMemo(()=>suplinitorFinal?[...echipa,SUPLINITOR_OBJ]:echipa,[echipa,suplinitorFinal]);
   const clasament = useMemo(()=>[...echipa].map(m=>({...m,...calcScor(m,weekStart)})).sort((a,b)=>b.scor-a.scor),[echipa,weekStart,calcScor]);
+
+  // ─── Tabel Ore & Suplimentare ───
+  const tabelOre = useMemo(() => {
+    const displayEchipaOre = suplinitorFinal ? [...echipa, SUPLINITOR_OBJ] : echipa;
+    return displayEchipaOre.map((m, i) => {
+      const oreSapt = calcOreSaptamana(m, weekStart, echipa, suplinitorFinal, swapuri);
+      const oreSuplSapt = Math.max(0, oreSapt - 40);
+      const st = calcScor(m, weekStart);
+      const oreLuna = st.ore;
+      // Norma lunara = numar zile lucratoare din luna * 8h
+      const yr = weekStart.getFullYear(), mo = weekStart.getMonth();
+      let normaZile = 0;
+      for (let d = new Date(yr,mo,1); d < new Date(yr,mo+1,1); d.setDate(d.getDate()+1)) {
+        if (d.getDay() > 0 && d.getDay() < 6 && !isSarbatoare(new Date(d))) normaZile++;
+      }
+      const normaLuna = normaZile * 8;
+      const oreSuplLuna = Math.max(0, oreLuna - normaLuna);
+      const depaseste = oreSapt > 48;
+      return { angajat: m, idx: i, oreSapt, oreSuplSapt, oreLuna, oreSuplLuna: Math.round(oreSuplLuna), depaseste, zileLucrateLuna: st.zile, normaLuna };
+    });
+  }, [echipa, weekStart, suplinitorFinal, swapuri, calcScor]);
 
   // Calendar lunar — zilele lunii
   const zileLuna = useMemo(() => {
@@ -1755,6 +1798,64 @@ export default function RotaFlow() {
                 </div>
               )}
 
+              {/* ── Tabel Ore & Suplimentare ── */}
+              <div className="bg-[#2c2c2e] border border-white/[0.07] rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-white/[0.07] flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Clock size={13} className="text-[#60cdff]"/>
+                    <span className="font-semibold text-[12px] text-zinc-300">Ore lucrate & Suplimentare</span>
+                  </div>
+                  <button onClick={generateOrePDF}
+                    className="flex items-center gap-1.5 bg-[#0078d4]/20 hover:bg-[#0078d4]/30 border border-[#0078d4]/30 text-[#60cdff] text-[11px] font-semibold px-3 py-1 rounded-lg transition-all">
+                    <FileDown size={11}/> Export PDF
+                  </button>
+                </div>
+                <div className="p-4">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="text-zinc-500 border-b border-white/[0.07]">
+                          <th className="text-left py-2 font-medium">Angajat</th>
+                          <th className="text-center py-2 font-medium">Ore săpt.</th>
+                          <th className="text-center py-2 font-medium">Normă</th>
+                          <th className="text-center py-2 font-medium">Supl. săpt.</th>
+                          <th className="text-center py-2 font-medium">Ore lună</th>
+                          <th className="text-center py-2 font-medium">Zile lucrate</th>
+                          <th className="text-center py-2 font-medium">Supl. lună</th>
+                          <th className="text-center py-2 font-medium">Depășire</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tabelOre.map((r, i) => (
+                          <tr key={i} className={`border-b border-white/[0.04] ${r.depaseste ? 'bg-red-950/20' : ''}`}>
+                            <td className="py-2 font-semibold">{r.angajat.nume}</td>
+                            <td className="text-center py-2 text-[#60cdff] font-bold">{r.oreSapt}h</td>
+                            <td className="text-center py-2 text-zinc-500">40h</td>
+                            <td className={`text-center py-2 font-bold ${r.oreSuplSapt > 0 ? 'text-amber-400' : 'text-zinc-600'}`}>
+                              {r.oreSuplSapt > 0 ? `+${r.oreSuplSapt}h` : '—'}
+                            </td>
+                            <td className="text-center py-2 text-[#60cdff] font-bold">{r.oreLuna}h</td>
+                            <td className="text-center py-2">{r.zileLucrateLuna}</td>
+                            <td className={`text-center py-2 font-bold ${r.oreSuplLuna > 0 ? 'text-amber-400' : 'text-zinc-600'}`}>
+                              {r.oreSuplLuna > 0 ? `+${r.oreSuplLuna}h` : '—'}
+                            </td>
+                            <td className="text-center py-2">
+                              {r.depaseste
+                                ? <span className="bg-red-900/40 text-red-300 text-[10px] font-bold px-2 py-0.5 rounded-full">⚠ &gt;48h</span>
+                                : <span className="text-zinc-600 text-[10px]">✓</span>
+                              }
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="text-[9px] text-zinc-600 mt-3">
+                    Normă săptămânală: 40h | Ore suplimentare = ore lucrate − 40h | Depășire legală: &gt;48h/săpt (Art. 114 Codul Muncii) | Săptămâna afișată: {fmtDate(weekStart)} – {fmtDate(new Date(weekStart.getTime()+6*86400000))}
+                  </p>
+                </div>
+              </div>
+
               <div className="bg-[#2c2c2e] border border-white/[0.07] rounded-xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-white/[0.07] flex items-center gap-2">
                   <Trophy size={13} className="text-amber-400"/>
@@ -2028,20 +2129,20 @@ export default function RotaFlow() {
                     <div className="grid grid-cols-3 gap-3">
                       <div className="bg-red-950/30 border border-red-500/20 rounded-xl p-3 text-center">
                         <p className="text-[20px] font-black text-red-400">{planCriza.zileCuSup}</p>
-                        <p className="text-[10px] text-zinc-500">zile cu suplinitor</p>
+                        <p className="text-[10px] text-zinc-500">zile cu suplinitorii din Cta</p>
                       </div>
                       <div className="bg-[#2c2c2e] border border-white/[0.07] rounded-xl p-3 text-center">
                         <p className="text-[20px] font-black text-amber-400">{planCriza.zileTotal - planCriza.zileCuSup}</p>
-                        <p className="text-[10px] text-zinc-500">zile recuperare (fără sup.)</p>
+                        <p className="text-[10px] text-zinc-500">zile totale plan</p>
                       </div>
                       <div className="bg-emerald-950/30 border border-emerald-500/20 rounded-xl p-3 text-center">
                         <p className="text-[13px] font-bold text-emerald-400">{planCriza.dataPlecareSup}</p>
-                        <p className="text-[10px] text-zinc-500">suplinitorul pleacă</p>
+                        <p className="text-[10px] text-zinc-500">criza se termină</p>
                       </div>
                     </div>
 
                     <p className="text-[10px] text-zinc-600">
-                      Distribuție optimă: suplinitorul lucrează zilnic până când primul angajat revine din CO/CM (4 activi = legal fără suplinitor). Localii sunt distribuiți echitabil — cel cu mai puține ore are prioritate. Regula S→D interzisă respectată.
+                      Un angajat face S toată săptămâna (rotativ săptămânal). Sâmbăta = zi normală de lucru (2D+1S cu localii). Duminica = suplinitorii vin din Constanța (2D+2S), localii liberi — zi de tranziție. Luni noul om pe S începe tura. Zero S→D garantat matematic.
                     </p>
 
                     {/* Tabel plan zilnic */}
@@ -2053,7 +2154,7 @@ export default function RotaFlow() {
                             {echipa.map(m=>(
                               <th key={m.id} className="text-center py-2 font-medium">{m.nume.split(' ')[0]}</th>
                             ))}
-                            <th className="text-center py-2 font-medium text-red-400">SUP</th>
+                            <th className="text-center py-2 font-medium text-orange-400">SUP</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2061,11 +2162,11 @@ export default function RotaFlow() {
                             const d = parseD(zi.data);
                             const isWeekend = d.getDay()===0||d.getDay()===6;
                             return (
-                              <tr key={idx} className={`border-b border-white/[0.03] ${isWeekend?'bg-white/[0.01]':''} ${!zi.cuSuplinitor?'opacity-70':''}`}>
+                              <tr key={idx} className={`border-b border-white/[0.03] ${isWeekend?'bg-white/[0.01]':''} ${zi.ziuaSef?'bg-orange-950/20':''}`}>
                                 <td className="py-1.5 text-zinc-400">
                                   {fmtDate(d)}
                                   <span className="ml-1 text-[9px] text-zinc-600">{['Du','Lu','Ma','Mi','Jo','Vi','Sâ'][d.getDay()]}</span>
-                                  {!zi.cuSuplinitor && <span className="ml-1 text-[9px] text-emerald-600">fără sup.</span>}
+                                  {zi.ziuaSef && <span className="ml-1 text-[9px] text-orange-400 font-bold">⭐ suplinitori Cta</span>}
                                 </td>
                                 {echipa.map(m=>{
                                   const t = zi.ture[m.id] || 'L';
@@ -2078,10 +2179,8 @@ export default function RotaFlow() {
                                   );
                                 })}
                                 <td className="text-center py-1.5">
-                                  {zi.cuSuplinitor ? (
-                                    <span className={`inline-block w-6 h-6 rounded text-[10px] font-bold leading-6 ${zi.ture['SUP']==='D'?'bg-red-900/50 text-red-300':'bg-orange-900/50 text-orange-300'}`}>
-                                      {zi.ture['SUP']}
-                                    </span>
+                                  {zi.ziuaSef ? (
+                                    <span className="inline-block px-1.5 h-6 rounded text-[9px] font-bold leading-6 bg-orange-900/50 text-orange-300">2D+2S</span>
                                   ) : (
                                     <span className="text-zinc-700 text-[10px]">—</span>
                                   )}
@@ -2102,6 +2201,7 @@ export default function RotaFlow() {
                         <button onClick={()=>{
                           setTuraOverride(prev => prev.filter(o => !o.id.startsWith('criza_')));
                           setSuplinitorActiv(false);
+                          setCrizaAplicataInterval(null);
                           addLog('Plan Criză anulat — override-uri de tură șterse, suplinitor dezactivat');
                           setShowPlanCriza(false);
                         }} className="flex-1 bg-red-900/30 border border-red-500/30 text-red-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-red-900/50 transition-all">
