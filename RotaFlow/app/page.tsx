@@ -1,4 +1,4 @@
-// RotaFlow v3.8 — Rotatie echitabila bazata pe ore acumulate din Iunie — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v3.9 — Drag & Drop manual ture in rotatie — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -580,6 +580,9 @@ export default function RotaFlow() {
   const [activeTab, setActiveTab] = useState<'rota'|'luna'|'stats'|'swap'|'log'>('rota');
   const [showCO, setShowCO] = useState(false);
   const [showUrgente, setShowUrgente] = useState(false);
+  const [dragSrc, setDragSrc] = useState<{angajatId: number; data: string; tura: string} | null>(null);
+  const [dragOver, setDragOver] = useState<{angajatId: number; data: string} | null>(null);
+  const [dragError, setDragError] = useState<string | null>(null);
   const [showPlanCriza, setShowPlanCriza] = useState(false);
   const [planCriza, setPlanCriza] = useState<PlanCriza | null>(null);
   const [planCrizaStart, setPlanCrizaStart] = useState(fmtDateInput(new Date()));
@@ -1072,6 +1075,79 @@ export default function RotaFlow() {
   };
 
   // ─── Aplica Planul de Criza in calendarul real ───
+  // ─── Drag & Drop manual ture ───
+  const aplicaDragDrop = (src: {angajatId: number; data: string; tura: string}, destAngajatId: number) => {
+    const d = parseD(src.data);
+    const srcAngajat = echipa.find(m => m.id === src.angajatId);
+    const destAngajat = echipa.find(m => m.id === destAngajatId);
+    if (!srcAngajat || !destAngajat) return;
+    if (src.angajatId === destAngajatId) return;
+
+    const turaDest = getTuraW(d, destAngajat);
+    const dStr = src.data;
+
+    // Validari
+    // 1. Nu putem muta CO/CM/AN
+    if (['CO','CM','AN'].includes(src.tura)) {
+      setDragError(`${srcAngajat.nume} este în ${src.tura} — nu se poate muta`);
+      setTimeout(() => setDragError(null), 3000); return;
+    }
+    // 2. Nu putem pune o tura pe cineva in CO/CM/AN
+    if (['CO','CM','AN'].includes(turaDest.type)) {
+      setDragError(`${destAngajat.nume} este în ${turaDest.type} — nu poate prelua tură`);
+      setTimeout(() => setDragError(null), 3000); return;
+    }
+    // 3. Verifica S->D pentru dest (daca primeste D, ziua precedenta nu trebuie sa fie S)
+    if (src.tura === 'D') {
+      const ziPrev = new Date(d.getTime() - 86400000);
+      const turaPrevDest = getTuraW(ziPrev, destAngajat);
+      if (turaPrevDest.type === 'S') {
+        setDragError(`S→D interzis: ${destAngajat.nume} a facut S ieri`);
+        setTimeout(() => setDragError(null), 3000); return;
+      }
+    }
+    // 4. Verifica S->D pentru src (daca pleaca din D, maine nu trebuie sa fie S pentru el)
+    if (turaDest.type === 'D' && src.tura === 'L') {
+      // src primeste L (liber), maine poate face orice — ok
+    }
+    // 5. Verifica 48h pentru dest
+    const oreDest = calcOreSaptamana(destAngajat, weekStart, echipa, suplinitorFinal, swapuri, turaOverride);
+    if (['D','S'].includes(src.tura) && !['D','S'].includes(turaDest.type)) {
+      if (oreDest + 8 > 48) {
+        setDragError(`${destAngajat.nume} ar depăși 48h/săptămână`);
+        setTimeout(() => setDragError(null), 3000); return;
+      }
+    }
+
+    // Aplicam: cream override-uri pentru ambii angajati
+    const expiraLa = fmtDateInput(new Date(weekStart.getTime() + 7 * 86400000));
+    const noileOverride = turaOverride.filter(o =>
+      !(o.id.startsWith('drag_') && o.data === dStr && (o.angajatId === src.angajatId || o.angajatId === destAngajatId))
+    );
+
+    // src primeste tura lui dest
+    noileOverride.push({
+      id: `drag_${src.angajatId}_${dStr}`,
+      angajatId: src.angajatId,
+      data: dStr,
+      tura: turaDest.type.replace('↔','') as 'D'|'S'|'L',
+      expiraLa,
+    });
+    // dest primeste tura lui src
+    noileOverride.push({
+      id: `drag_${destAngajatId}_${dStr}`,
+      angajatId: destAngajatId,
+      data: dStr,
+      tura: src.tura as 'D'|'S'|'L',
+      expiraLa,
+    });
+
+    setTuraOverride(noileOverride);
+    addLog(`Schimb manual: ${srcAngajat.nume} ↔ ${destAngajat.nume} pe ${fmtDate(d)}`);
+    setDragSrc(null);
+    setDragOver(null);
+  };
+
   const aplicaPlanCriza = () => {
     if (!planCriza) return;
 
@@ -1872,9 +1948,32 @@ export default function RotaFlow() {
                             const sarb=isSarbatoare(d);
                             const baseType=t.type.replace('↔','');
                             const style=SHIFT_STYLE[baseType]??SHIFT_STYLE.L;
+                            const dStr=fmtDateInput(d);
+                            const isDragSrc=dragSrc?.angajatId===m.id&&dragSrc?.data===dStr;
+                            const isDragOver=dragOver?.angajatId===m.id&&dragOver?.data===dStr;
+                            const isDraggable=!['CO','CM','AN'].includes(baseType);
                             return (
                               <td key={di} className="text-center">
-                                <div className={`relative text-[13px] font-black py-3 px-2 rounded-xl ${style} ${t.swapped?'ring-2 ring-amber-400/60':''}`}>
+                                <div
+                                  draggable={isDraggable}
+                                  onDragStart={isDraggable ? ()=>setDragSrc({angajatId:m.id,data:dStr,tura:baseType}) : undefined}
+                                  onDragEnd={()=>{setDragSrc(null);setDragOver(null);}}
+                                  onDragOver={e=>{e.preventDefault();setDragOver({angajatId:m.id,data:dStr});}}
+                                  onDragLeave={()=>setDragOver(null)}
+                                  onDrop={e=>{
+                                    e.preventDefault();
+                                    if(dragSrc && dragSrc.data===dStr && dragSrc.angajatId!==m.id){
+                                      aplicaDragDrop(dragSrc, m.id);
+                                    }
+                                    setDragOver(null);
+                                  }}
+                                  className={`relative text-[13px] font-black py-3 px-2 rounded-xl transition-all
+                                    ${style}
+                                    ${t.swapped?'ring-2 ring-amber-400/60':''}
+                                    ${isDragSrc?'opacity-40 scale-95':''}
+                                    ${isDragOver&&dragSrc&&dragSrc.data===dStr&&dragSrc.angajatId!==m.id?'ring-2 ring-white/60 scale-105':''}
+                                    ${isDraggable&&!isDragSrc?'cursor-grab active:cursor-grabbing':'cursor-default'}
+                                  `}>
                                   {t.label}
                                   {sarb&&!['L','CO','CM','AN'].includes(baseType)&&<span className="absolute -top-1.5 -right-1 text-amber-400 text-[10px]">★</span>}
                                 </div>
@@ -1887,7 +1986,7 @@ export default function RotaFlow() {
                   </tbody>
                 </table>
               </div>
-              <div className="px-4 py-3 border-t border-white/[0.05] flex gap-5 flex-wrap">
+              <div className="px-4 py-3 border-t border-white/[0.05] flex gap-5 flex-wrap items-center">
                 {[['sky','Dimineață'],['purple','Seară'],['zinc','Liber'],['rose','CO'],['orange','CM'],['red','Abs. Nemot.']].map(([c,l])=>(
                   <div key={l} className="flex items-center gap-2 text-[12px] text-zinc-400">
                     <div className={`w-3 h-3 rounded-md bg-${c}-900/70 border border-${c}-500/30`}/>{l}
@@ -1895,7 +1994,15 @@ export default function RotaFlow() {
                 ))}
                 <div className="flex items-center gap-2 text-[12px] text-zinc-400"><span className="text-amber-400/80 text-[11px]">↔</span> Swap</div>
                 <div className="flex items-center gap-2 text-[12px] text-zinc-400"><span className="text-amber-400">★</span> Sărbătoare</div>
+                <div className="ml-auto flex items-center gap-1.5 text-[11px] text-zinc-600">
+                  <span>✥</span> Trage o celulă pe alta pentru a schimba turele
+                </div>
               </div>
+              {dragError && (
+                <div className="mx-4 mb-3 flex items-center gap-2 bg-red-950/60 border border-red-500/40 text-red-300 text-[12px] font-semibold px-4 py-2 rounded-xl animate-pulse">
+                  <AlertTriangle size={14}/> {dragError}
+                </div>
+              )}
             </div>
           )}
 
