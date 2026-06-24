@@ -1,4 +1,4 @@
-// RotaFlow v4.1 — Max 5-6 consecutive in Plan Criza — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v4.2 — Libere pre-criza pentru max 6 consecutive — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -1433,6 +1433,77 @@ export default function RotaFlow() {
             sCnt[m.id] = (sCnt[m.id] || 0) + 1;
           }
         });
+      }
+    }
+
+    // Override saptamana pre-criza: dam libere celor care intra cu 2+ consecutive
+    // ca sa nu depaseasca 6 zile consecutive totale in criza
+    {
+      const ziuaStart = parseD(planCriza.dataStart);
+      const ziuaPreSa = new Date(ziuaStart.getTime() - 2 * 86400000); // Sa dinaintea crizei
+      const ziuaPreDu = new Date(ziuaStart.getTime() - 1 * 86400000); // Du dinaintea crizei
+      const expiraPre = planCriza.dataStart; // expira la inceputul crizei
+
+      // Consecutive per angajat in ziua dinainte de criza
+      const consecPre: Record<number, number> = {};
+      echipa.forEach(m => { consecPre[m.id] = 0; });
+      for (let i = 7; i >= 1; i--) {
+        const dPrev = new Date(ziuaStart.getTime() - i * 86400000);
+        echipa.forEach(m => {
+          if (!inCO(dPrev, m) && !inAbsenta(dPrev, m, 'any')) {
+            const tb = getTuraBaza(dPrev, m, echipa, false);
+            if (tb.type === 'D' || tb.type === 'S') consecPre[m.id]++;
+            else consecPre[m.id] = 0;
+          } else {
+            consecPre[m.id] = 0;
+          }
+        });
+      }
+
+      // Angajatii activi in criza care intra cu 2+ consecutive
+      const activiCriza = echipa.filter(m => !inCO(ziuaStart, m) && !inAbsenta(ziuaStart, m, 'any'));
+      const necesitaLiber = activiCriza
+        .filter(m => consecPre[m.id] >= 2)
+        .sort((a,b) => consecPre[b.id] - consecPre[a.id]);
+
+      if (necesitaLiber.length > 0) {
+        const activiSa = echipa.filter(m => !inCO(ziuaPreSa, m) && !inAbsenta(ziuaPreSa, m, 'any'));
+
+        // Dam liber pe Sa celui mai obosit, daca raman suficienti
+        for (const m of necesitaLiber) {
+          const raman = activiSa.filter(x => x.id !== m.id &&
+            !noileOverride.some(o => o.angajatId === x.id && o.data === fmtDateInput(ziuaPreSa) && o.tura === 'L'));
+          if (raman.length >= 3) {
+            noileOverride.push({
+              id: `criza_pre_${m.id}_${fmtDateInput(ziuaPreSa)}`,
+              angajatId: m.id,
+              data: fmtDateInput(ziuaPreSa),
+              tura: 'L',
+              expiraLa: expiraPre,
+            });
+            break; // un liber pe Sa e suficient in general
+          }
+        }
+
+        // Duminica: dam liber celor care inca au 1+ consecutive dupa Sa
+        const activiDu = echipa.filter(m => !inCO(ziuaPreDu, m) && !inAbsenta(ziuaPreDu, m, 'any'));
+        for (const m of necesitaLiber) {
+          const ovSa = noileOverride.find(o => o.angajatId === m.id && o.data === fmtDateInput(ziuaPreSa));
+          if (ovSa?.tura === 'L') continue; // deja liber Sa
+          // Inca are 2+ consecutive → dam liber Du daca putem
+          const raman = activiDu.filter(x => x.id !== m.id &&
+            !noileOverride.some(o => o.angajatId === x.id && o.data === fmtDateInput(ziuaPreDu) && o.tura === 'L'));
+          if (raman.length >= 3) {
+            noileOverride.push({
+              id: `criza_pre_${m.id}_${fmtDateInput(ziuaPreDu)}`,
+              angajatId: m.id,
+              data: fmtDateInput(ziuaPreDu),
+              tura: 'L',
+              expiraLa: expiraPre,
+            });
+            break;
+          }
+        }
       }
     }
 
