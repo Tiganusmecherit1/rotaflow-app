@@ -1,4 +1,4 @@
-// RotaFlow v4.5 — Click modifica orice celula D/S/L — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v4.6 — Plan criza: S fix pe saptamana rotativ — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -438,6 +438,7 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
 
   let d = new Date(dataStart);
   const saptamaniProcesate = new Set<string>();
+  let rotatieSIdx = 0;
 
   while (d <= dataEnd) {
     const lu = getMonday(d);
@@ -462,8 +463,11 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
     // Daca nu exista Duminica in intervalul acestei saptamani → suplinitorul nu vine.
     const ziuaSup = zileWE.find(z => z.getDay() === 0) ?? null;
 
-    // alesOMSaptamana va fi setat dinamic pe fiecare zi
-    let alesOMSaptamana = activiStart[0]?.id ?? 0;
+    // Cine face S toata aceasta saptamana (rotativ per saptamana)
+    const omSSapt = activiStart[rotatieSIdx % activiStart.length].id;
+    const omDSapt = activiStart.map(m => m.id).filter(id => id !== omSSapt);
+    let alesOMSaptamana = omSSapt;
+    rotatieSIdx++;
 
     for (const zi of zileSapt) {
       const ture: Record<number | 'SUP', 'D' | 'S' | 'L' | '2D+2S'> = {} as Record<number | 'SUP', 'D' | 'S' | 'L' | '2D+2S'>;
@@ -476,51 +480,47 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
         // Duminica: suplinitorul vine, toti localii liberi → resetam consecutivele
         ture['SUP'] = '2D+2S';
         ziuaSupFlag = true;
-        activiStart.forEach(m => { consecZile[m.id] = 0; turaPrevZi[m.id] = 'L'; });      } else {
-        // Zi normala: respectam max 5 consecutive
+        activiStart.forEach(m => { consecZile[m.id] = 0; turaPrevZi[m.id] = 'L'; });
+      } else {
+        // Zi normala: omSSapt face S, omDSapt fac D
+        // Daca cineva a atins 5 consecutive → ia liber, altcineva preia
         const mustRest = activiStart.filter(m => (consecZile[m.id] ?? 0) >= 5).map(m => m.id);
-        // Cei cu 4+ consecutive au prioritate la liber daca avem suficienti fara ei
-        const preferRest = activiStart.filter(m => (consecZile[m.id] ?? 0) >= 4 && !mustRest.includes(m.id)).map(m => m.id);
-        // Cine nu poate face D? (a facut S ieri)
-        const noD = activiStart.filter(m => turaPrevZi[m.id] === 'S').map(m => m.id);
 
-        // Incercam mai intai fara cei obositi (preferRest)
-        const disponibiliOdihniti = activiStart.filter(m => !mustRest.includes(m.id) && !preferRest.includes(m.id));
-        const disponibiliFortat = activiStart.filter(m => !mustRest.includes(m.id));
-        let disponibili = disponibiliOdihniti.length >= 3 ? disponibiliOdihniti : disponibiliFortat;
-
-        // Daca nu avem 3 disponibili, relaxam
-        if (disponibili.length < 3) {
-          const extra = activiStart
-            .filter(m => mustRest.includes(m.id))
-            .sort((a,b) => (consecZile[a.id]??0) - (consecZile[b.id]??0));
-          disponibili = [...disponibili, ...extra.slice(0, 3 - disponibili.length)];
+        if (mustRest.includes(omSSapt)) {
+          // Omul de S trebuie sa se odihneasca — cel mai putini consecutive din omD preia S
+          ture[omSSapt] = 'L';
+          const inlocuitorS = omDSapt
+            .filter(id => !mustRest.includes(id))
+            .sort((a,b) => (consecZile[a]??0) - (consecZile[b]??0))[0];
+          if (inlocuitorS !== undefined) {
+            ture[inlocuitorS] = 'S';
+            omDSapt.filter(id => id !== inlocuitorS && !mustRest.includes(id)).forEach(id => { ture[id] = 'D'; });
+          } else {
+            // Toti obositi — punem omul de S totusi (fortat)
+            ture[omSSapt] = 'S';
+            omDSapt.filter(id => !mustRest.includes(id)).forEach(id => { ture[id] = 'D'; });
+          }
+        } else {
+          // Normal: omSSapt face S, omDSapt fac D (cei cu must_rest iau L)
+          ture[omSSapt] = 'S';
+          omDSapt.forEach(id => {
+            ture[id] = mustRest.includes(id) ? 'L' : 'D';
+          });
+          // Daca am dat prea multi L si nu avem 2D → readaugam cel mai putin obosit
+          const nrD = Object.values(ture).filter(v => v === 'D').length;
+          if (nrD < 2) {
+            const extra = omDSapt
+              .filter(id => mustRest.includes(id))
+              .sort((a,b) => (consecZile[a]??0) - (consecZile[b]??0));
+            extra.slice(0, 2 - nrD).forEach(id => { ture[id] = 'D'; });
+          }
         }
-        if (disponibili.length < 3) disponibili = activiStart;
 
-        // Alege S: cel cu putine S-uri dintre disponibili, nu cel cu S ieri
-        const candS = disponibili
-          .filter(m => !noD.includes(m.id) || disponibili.filter(x => !noD.includes(x.id)).length === 0)
-          .sort((a,b) => (sCount[a.id]??0) - (sCount[b.id]??0));
-        const alesS = (candS[0] ?? disponibili[0]).id;
-
-        // Alege 2D: nu S, nu S ieri (cu fallback)
-        const candD = disponibili.filter(m => m.id !== alesS && !noD.includes(m.id));
-        const candDFallback = disponibili.filter(m => m.id !== alesS);
-        const alesiD = (candD.length >= 2 ? candD : candDFallback).slice(0,2).map(m => m.id);
-
-        ture[alesS] = 'S';
-        alesiD.forEach(id => { ture[id] = 'D'; });
-
-        // Actualizam starea
+        // Actualizam consecutive
         activiStart.forEach(m => {
           const t = ture[m.id] as string;
-          if (t === 'D' || t === 'S') {
-            consecZile[m.id] = (consecZile[m.id] ?? 0) + 1;
-            if (t === 'S') sCount[m.id] = (sCount[m.id] ?? 0) + 1;
-          } else {
-            consecZile[m.id] = 0;
-          }
+          if (t === 'D' || t === 'S') consecZile[m.id] = (consecZile[m.id] ?? 0) + 1;
+          else consecZile[m.id] = 0;
           turaPrevZi[m.id] = t;
         });
       }
