@@ -595,44 +595,6 @@ export default function RotaFlow() {
   const [showVerificare, setShowVerificare] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncOk, setSyncOk] = useState(false);
-
-  const sincronizeazaDB = useCallback(async () => {
-    setSyncLoading(true); setSyncOk(false);
-    try {
-      const azi = new Date().toISOString().split('T')[0];
-      const rows = turaOverride
-        .filter(o => o.expiraLa >= azi)
-        .map(o => ({
-          id: o.id,
-          angajat_id: o.angajatId,
-          data: o.data,
-          tura: o.tura,
-          expira_la: o.expiraLa,
-          tip: o.id.startsWith('drag_') ? 'manual'
-            : o.id.startsWith('criza_pre_') ? 'criza_pre'
-            : o.id.startsWith('criza_comp_') ? 'criza_comp'
-            : 'criza',
-        }));
-      await fetch('/api/sync-overrides', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          overrides: rows,
-          notificare: {
-            titlu: 'Program actualizat',
-            mesaj: `Programul a fost modificat pentru săptămâna ${weekStart.toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' })}. Verifică turele tale în aplicație.`,
-            tip: 'program',
-          },
-        }),
-      });
-      addLog(`✓ Sincronizat cu baza de date — ${rows.length} override-uri trimise`);
-      setSyncOk(true);
-      setTimeout(() => setSyncOk(false), 3000);
-    } catch {
-      addLog('✗ Eroare la sincronizare cu baza de date');
-    }
-    setSyncLoading(false);
-  }, [turaOverride, weekStart, addLog]);
   const [rezultateVerificare, setRezultateVerificare] = useState<{tip:'ok'|'warn'|'err'; mesaj: string}[]>([]);
 
   const verificaSaptamana = () => {
@@ -854,6 +816,44 @@ export default function RotaFlow() {
   }, [weekOffset]);
 
   const days = useMemo(() => Array.from({length:7},(_,i)=>new Date(weekStart.getTime()+i*86400000)), [weekStart]);
+
+  const sincronizeazaDB = useCallback(async () => {
+    setSyncLoading(true); setSyncOk(false);
+    try {
+      const azi = new Date().toISOString().split('T')[0];
+      const rows = turaOverride
+        .filter(o => o.expiraLa >= azi)
+        .map(o => ({
+          id: o.id,
+          angajat_id: o.angajatId,
+          data: o.data,
+          tura: o.tura,
+          expira_la: o.expiraLa,
+          tip: o.id.startsWith('drag_') ? 'manual'
+            : o.id.startsWith('criza_pre_') ? 'criza_pre'
+            : o.id.startsWith('criza_comp_') ? 'criza_comp'
+            : 'criza',
+        }));
+      await fetch('/api/sync-overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          overrides: rows,
+          notificare: {
+            titlu: 'Program actualizat',
+            mesaj: `Programul a fost modificat pentru săptămâna ${weekStart.toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' })}. Verifică turele tale în aplicație.`,
+            tip: 'program',
+          },
+        }),
+      });
+      addLog(`✓ Sincronizat cu baza de date — ${rows.length} override-uri trimise`);
+      setSyncOk(true);
+      setTimeout(() => setSyncOk(false), 3000);
+    } catch {
+      addLog('✗ Eroare la sincronizare cu baza de date');
+    }
+    setSyncLoading(false);
+  }, [turaOverride, weekStart, addLog]);
 
   const lunaStart = useMemo(() => {
     const now = new Date();
