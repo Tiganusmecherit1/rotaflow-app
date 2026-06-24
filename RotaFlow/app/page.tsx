@@ -1,4 +1,4 @@
-// RotaFlow v5.3 — Verificare 2D+1S per zi in butonul Verifica — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v5.4 — Fix PDF stats: text vizibil, suplinitor amber — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -1722,13 +1722,17 @@ export default function RotaFlow() {
           return [[faraDiacritice('Suplinitor (Cta)'), sSup.zile.toString(), `${sSup.ore}h`, sSup.sarbLucrate.toString(), '—', '—', '—', '—']];
         })(),
       ],
-      startY: statsY+4, styles:{fontSize:9}, headStyles:{fillColor:[0,120,212]},
-      bodyStyles: { textColor: [220,220,220] },
+      startY: statsY+4,
+      styles: { fontSize: 9, textColor: [30, 30, 30], fillColor: [255, 255, 255] },
+      headStyles: { fillColor: [0, 120, 212], textColor: [255, 255, 255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
       didParseCell: (data: any) => {
-        // Evidentiaza randul suplinitorului
-        if (data.row.index === echipa.length && data.section === 'body') {
-          data.cell.styles.fillColor = [40, 30, 10];
-          data.cell.styles.textColor = [251, 191, 36];
+        // Evidentiaza randul suplinitorului cu amber
+        const supRow = data.row.index === (data.table.body.length - 1) && data.section === 'body';
+        if (supRow) {
+          data.cell.styles.fillColor = [255, 243, 205];
+          data.cell.styles.textColor = [120, 60, 0];
+          data.cell.styles.fontStyle = 'bold';
         }
       }
     });
