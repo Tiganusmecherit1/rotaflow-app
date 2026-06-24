@@ -8,26 +8,29 @@ const sb = createClient(
 
 export async function POST(req: Request) {
   try {
-    const { overrides, notificare } = await req.json()
+    const { ture, notificare } = await req.json()
 
-    // Upsert overrides daca exista
-    if (overrides && overrides.length > 0) {
-      const { error } = await sb.from('overrides').upsert(overrides, { onConflict: 'id' })
+    // Salveaza turele calculate in ture_mirror
+    if (ture && ture.length > 0) {
+      // Sterge turele vechi
+      const dates = [...new Set(ture.map((t: any) => t.data))] as string[]
+      await sb.from('ture_mirror').delete().in('data', dates)
+      // Insereaza turele noi
+      const { error } = await sb.from('ture_mirror').insert(ture)
       if (error) throw error
     }
 
-    // Trimite o singura notificare catre toti angajatii
+    // Trimite notificare
     if (notificare) {
-      const { error } = await sb.from('notificari').insert({
+      await sb.from('notificari').insert({
         titlu: notificare.titlu,
         mesaj: notificare.mesaj,
         tip: notificare.tip || 'program',
         citita_de: [],
       })
-      if (error) throw error
     }
 
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ ok: true, count: ture?.length ?? 0 })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })
   }
