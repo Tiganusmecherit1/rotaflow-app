@@ -1,4 +1,4 @@
-// RotaFlow v4.0 — Fix S->D complet drag&drop (toate 4 cazuri) — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v4.1 — Max 5-6 consecutive in Plan Criza — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -417,7 +417,24 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
   }
 
   const plan: PlanCrizaZi[] = [];
-  let rotatieSIdx = 0; // index in activiStart pentru cine face S
+
+  // Calculam zile consecutive lucrate INAINTE de criza (max 7 zile lookback)
+  const consecZile: Record<number, number> = {};
+  const turaPrevZi: Record<number, string> = {};
+  const sCount: Record<number, number> = {};
+  activiStart.forEach(m => { consecZile[m.id] = 0; turaPrevZi[m.id] = 'L'; sCount[m.id] = 0; });
+
+  for (let i = 7; i >= 1; i--) {
+    const dPrev = new Date(dataStart.getTime() - i * 86400000);
+    activiStart.forEach(m => {
+      if (!eAbsent(m, dPrev)) {
+        const tb = getTuraBaza(dPrev, m, echipa, false);
+        if (tb.type === 'D' || tb.type === 'S') consecZile[m.id] = (consecZile[m.id]||0) + 1;
+        else consecZile[m.id] = 0;
+        if (i === 1) turaPrevZi[m.id] = tb.type;
+      }
+    });
+  }
 
   let d = new Date(dataStart);
   const saptamaniProcesate = new Set<string>();
@@ -444,17 +461,9 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
     // Ziua suplinitorului: DUMINICA exclusiv.
     // Daca nu exista Duminica in intervalul acestei saptamani → suplinitorul nu vine.
     const ziuaSup = zileWE.find(z => z.getDay() === 0) ?? null;
-    // Sambata: zi normala de lucru (localii muncesc)
-    const ziuaSa = zileWE.find(z => z.getDay() === 6);
 
-    // Cine face S aceasta saptamana
-    const omS = activiStart[rotatieSIdx % activiStart.length].id;
-    // Cine face S saptamana urmatoare (incepe Duminica)
-    const omSUrmator = activiStart[(rotatieSIdx + 1) % activiStart.length].id;
-    rotatieSIdx++;
-
-    const omD = activiStart.map(m => m.id).filter(id => id !== omS);
-    const omDUrmator = activiStart.map(m => m.id).filter(id => id !== omSUrmator);
+    // alesOMSaptamana va fi setat dinamic pe fiecare zi
+    let alesOMSaptamana = activiStart[0]?.id ?? 0;
 
     for (const zi of zileSapt) {
       const ture: Record<number | 'SUP', 'D' | 'S' | 'L' | '2D+2S'> = {} as Record<number | 'SUP', 'D' | 'S' | 'L' | '2D+2S'>;
@@ -464,16 +473,59 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
       let ziuaSupFlag = false;
 
       if (ziuaSup && fmtDateInput(zi) === fmtDateInput(ziuaSup)) {
-        // Duminica: suplinitorul vine (2D+2S), toti localii liberi — zi de tranzitie
+        // Duminica: suplinitorul vine, toti localii liberi → resetam consecutivele
         ture['SUP'] = '2D+2S';
         ziuaSupFlag = true;
-      } else {
-        // Zi normala (Lu-Sa): om_S face S, om_D fac D
-        ture[omS] = 'S';
-        omD.forEach(id => { ture[id] = 'D'; });
+        activiStart.forEach(m => { consecZile[m.id] = 0; turaPrevZi[m.id] = 'L'; });      } else {
+        // Zi normala: respectam max 5 consecutive
+        const mustRest = activiStart.filter(m => (consecZile[m.id] ?? 0) >= 5).map(m => m.id);
+        // Cei cu 4+ consecutive au prioritate la liber daca avem suficienti fara ei
+        const preferRest = activiStart.filter(m => (consecZile[m.id] ?? 0) >= 4 && !mustRest.includes(m.id)).map(m => m.id);
+        // Cine nu poate face D? (a facut S ieri)
+        const noD = activiStart.filter(m => turaPrevZi[m.id] === 'S').map(m => m.id);
+
+        // Incercam mai intai fara cei obositi (preferRest)
+        const disponibiliOdihniti = activiStart.filter(m => !mustRest.includes(m.id) && !preferRest.includes(m.id));
+        const disponibiliFortat = activiStart.filter(m => !mustRest.includes(m.id));
+        let disponibili = disponibiliOdihniti.length >= 3 ? disponibiliOdihniti : disponibiliFortat;
+
+        // Daca nu avem 3 disponibili, relaxam
+        if (disponibili.length < 3) {
+          const extra = activiStart
+            .filter(m => mustRest.includes(m.id))
+            .sort((a,b) => (consecZile[a.id]??0) - (consecZile[b.id]??0));
+          disponibili = [...disponibili, ...extra.slice(0, 3 - disponibili.length)];
+        }
+        if (disponibili.length < 3) disponibili = activiStart;
+
+        // Alege S: cel cu putine S-uri dintre disponibili, nu cel cu S ieri
+        const candS = disponibili
+          .filter(m => !noD.includes(m.id) || disponibili.filter(x => !noD.includes(x.id)).length === 0)
+          .sort((a,b) => (sCount[a.id]??0) - (sCount[b.id]??0));
+        const alesS = (candS[0] ?? disponibili[0]).id;
+
+        // Alege 2D: nu S, nu S ieri (cu fallback)
+        const candD = disponibili.filter(m => m.id !== alesS && !noD.includes(m.id));
+        const candDFallback = disponibili.filter(m => m.id !== alesS);
+        const alesiD = (candD.length >= 2 ? candD : candDFallback).slice(0,2).map(m => m.id);
+
+        ture[alesS] = 'S';
+        alesiD.forEach(id => { ture[id] = 'D'; });
+
+        // Actualizam starea
+        activiStart.forEach(m => {
+          const t = ture[m.id] as string;
+          if (t === 'D' || t === 'S') {
+            consecZile[m.id] = (consecZile[m.id] ?? 0) + 1;
+            if (t === 'S') sCount[m.id] = (sCount[m.id] ?? 0) + 1;
+          } else {
+            consecZile[m.id] = 0;
+          }
+          turaPrevZi[m.id] = t;
+        });
       }
 
-      plan.push({ data: fmtDateInput(zi), ture: ture as Record<number | 'SUP', 'D' | 'S' | 'L' | '2D+2S'>, ziuaSef: ziuaSupFlag, omS });
+      plan.push({ data: fmtDateInput(zi), ture: ture as Record<number | 'SUP', 'D' | 'S' | 'L' | '2D+2S'>, ziuaSef: ziuaSupFlag, omS: alesOMSaptamana });
     }
 
     d = new Date(lu.getTime() + 7 * 86400000);
