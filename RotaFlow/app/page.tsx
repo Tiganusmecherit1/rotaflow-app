@@ -1,4 +1,4 @@
-// RotaFlow v4.4 — Click stanga=D, click dreapta=S, din nou=sterge — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v4.5 — Click modifica orice celula D/S/L — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -2091,13 +2091,37 @@ export default function RotaFlow() {
                               const overrideActiv = turaOverride.find(o=>o.id.startsWith('drag_')&&o.angajatId===m.id&&o.data===dStr);
                               const isRightClick = e.button === 2 || e.ctrlKey;
 
-                              // Click dreapta sau Ctrl+click → S
-                              // Click stanga → D dacă nu are override, șterge dacă are
-                              let turaNouaType: 'D'|'S'|null;
+                              // Tura curenta afisata (din override sau rotatie)
+                              const turaAfisata = baseType as 'D'|'S'|'L';
+
+                              // Click stanga: D→L→D (toggle D/L), sau daca e S→D
+                              // Click dreapta: S→L→S (toggle S/L), sau daca e D→S
+                              // Daca are override si dam acelasi tip → sterge override (revine la rotatie)
+                              let turaNouaType: 'D'|'S'|'L'|null;
+
                               if (isRightClick) {
-                                turaNouaType = overrideActiv?.tura === 'S' ? null : 'S';
+                                // Click dreapta → pune S, daca deja S cu override → sterge
+                                if (overrideActiv?.tura === 'S') {
+                                  turaNouaType = null; // sterge
+                                } else {
+                                  turaNouaType = 'S';
+                                }
                               } else {
-                                turaNouaType = overrideActiv ? null : 'D';
+                                // Click stanga:
+                                if (turaAfisata === 'D') {
+                                  // D → L (liber)
+                                  turaNouaType = 'L';
+                                } else if (turaAfisata === 'S') {
+                                  // S → L (liber)
+                                  turaNouaType = 'L';
+                                } else {
+                                  // L → D
+                                  turaNouaType = 'D';
+                                }
+                                // Daca are override si rezultatul = rotatie normala → sterge override
+                                if (overrideActiv && turaNouaType === null) {
+                                  turaNouaType = null;
+                                }
                               }
 
                               if (turaNouaType === null) {
@@ -2122,8 +2146,7 @@ export default function RotaFlow() {
 
                               // Validare 48h
                               const oreAct = calcOreSaptamana(m, weekStart, echipa, suplinitorFinal, swapuri, turaOverride);
-                              const turaVeche = baseType;
-                              const delta = (['D','S'].includes(turaNouaType)?8:0) - (['D','S'].includes(turaVeche)?8:0);
+                              const delta = (['D','S'].includes(turaNouaType)?8:0) - (['D','S'].includes(turaAfisata)?8:0);
                               if (oreAct + delta > 48) {
                                 setDragError(`${m.nume} ar depăși 48h/săptămână`);
                                 setTimeout(()=>setDragError(null),3000); return;
