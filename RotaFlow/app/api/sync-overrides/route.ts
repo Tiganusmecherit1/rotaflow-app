@@ -38,7 +38,7 @@ export async function POST(req: Request) {
         const rows = angajati.map((a: any) => ({
           titlu: 'Bază de date sincronizată',
           descriere: dataOra,
-          tip: 'program',
+          tip: 'co_adaugat',
           citita: false,
           destinatar_id: a.id,
         }))
