@@ -18,7 +18,7 @@ export async function POST(req: Request) {
       if (error) throw error
     }
 
-    // Trimite notificare cu data si ora exacta
+    // Trimite notificare cu data si ora exacta — cate una pentru fiecare angajat
     if (notificare) {
       const acum = new Date()
       const zi = String(acum.getDate()).padStart(2,'0')
@@ -28,13 +28,23 @@ export async function POST(req: Request) {
       const min = String(acum.getMinutes()).padStart(2,'0')
       const dataOra = `${zi}/${luna}/${an} ${ora}:${min}`
 
-      const { error: notifErr } = await sb.from('notificari').insert({
-        titlu: 'Bază de date sincronizată',
-        descriere: dataOra,
-        tip: 'program',
-        citita: false,
-      })
-      if (notifErr) console.error('Notificare error:', notifErr)
+      // Luam toti angajatii din tabela
+      const { data: angajati } = await sb
+        .from('angajati')
+        .select('id')
+        .eq('este_sef', false)
+
+      if (angajati && angajati.length > 0) {
+        const rows = angajati.map((a: any) => ({
+          titlu: 'Bază de date sincronizată',
+          descriere: dataOra,
+          tip: 'program',
+          citita: false,
+          destinatar_id: a.id,
+        }))
+        const { error: notifErr } = await sb.from('notificari').insert(rows)
+        if (notifErr) console.error('Notificare error:', notifErr)
+      }
     }
 
     return NextResponse.json({ ok: true, count: ture?.length ?? 0 })
