@@ -817,50 +817,6 @@ export default function RotaFlow() {
 
   const days = useMemo(() => Array.from({length:7},(_,i)=>new Date(weekStart.getTime()+i*86400000)), [weekStart]);
 
-  const sincronizeazaDB = useCallback(async () => {
-    setSyncLoading(true); setSyncOk(false);
-    try {
-      // Calculam turele pentru urmatorii 90 de zile pentru toti angajatii
-      const azi = new Date(); azi.setHours(0,0,0,0);
-      const tureCalculate: Array<{
-        angajat_id: number; data: string; tura: string
-      }> = [];
-
-      for (let i = -7; i < 90; i++) {
-        const d = new Date(azi.getTime() + i * 86400000);
-        const dStr = fmtDateInput(d);
-        echipa.forEach(m => {
-          const t = getTura(d, m, echipa, suplinitorFinal, swapuri, turaOverride, oreAcumulate);
-          tureCalculate.push({
-            angajat_id: m.id,
-            data: dStr,
-            tura: t.type,
-          });
-        });
-      }
-
-      await fetch('/api/sync-overrides', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ture: tureCalculate,
-          notificare: {
-            titlu: 'Program actualizat',
-            mesaj: `Programul a fost sincronizat pentru săptămâna ${weekStart.toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' })}. Verifică turele tale în aplicație.`,
-            tip: 'program',
-          },
-        }),
-      });
-
-      addLog(`✓ Sincronizat — ${tureCalculate.length} ture trimise în baza de date`);
-      setSyncOk(true);
-      setTimeout(() => setSyncOk(false), 3000);
-    } catch {
-      addLog('✗ Eroare la sincronizare cu baza de date');
-    }
-    setSyncLoading(false);
-  }, [echipa, suplinitorFinal, swapuri, turaOverride, oreAcumulate, weekStart, addLog]);
-
   const lunaStart = useMemo(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth() + lunaOffset, 1);
@@ -921,6 +877,40 @@ export default function RotaFlow() {
   }, [echipa, weekStart]);
 
   const getTuraW = useCallback((d: Date, m: Angajat) => getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride,oreAcumulate), [echipa,suplinitorFinal,swapuri,turaOverride,oreAcumulate]);
+
+  const sincronizeazaDB = useCallback(async () => {
+    setSyncLoading(true); setSyncOk(false);
+    try {
+      const azi = new Date(); azi.setHours(0,0,0,0);
+      const tureCalculate: Array<{angajat_id: number; data: string; tura: string}> = [];
+      for (let i = -7; i < 90; i++) {
+        const d = new Date(azi.getTime() + i * 86400000);
+        const dStr = fmtDateInput(d);
+        echipa.forEach(m => {
+          const t = getTura(d, m, echipa, suplinitorFinal, swapuri, turaOverride, oreAcumulate);
+          tureCalculate.push({ angajat_id: m.id, data: dStr, tura: t.type });
+        });
+      }
+      await fetch('/api/sync-overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ture: tureCalculate,
+          notificare: {
+            titlu: 'Program actualizat',
+            mesaj: `Programul sincronizat pentru săptămâna ${weekStart.toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' })}. Verifică turele în aplicație.`,
+            tip: 'program',
+          },
+        }),
+      });
+      addLog(`✓ Sincronizat — ${tureCalculate.length} ture trimise`);
+      setSyncOk(true);
+      setTimeout(() => setSyncOk(false), 3000);
+    } catch {
+      addLog('✗ Eroare la sincronizare');
+    }
+    setSyncLoading(false);
+  }, [echipa, suplinitorFinal, swapuri, turaOverride, oreAcumulate, weekStart, addLog]);
 
   // Alerte ore maxime (Art. 114 — max 48h/saptamana)
   const alerteOre = useMemo(() => {
