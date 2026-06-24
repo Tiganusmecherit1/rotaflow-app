@@ -1,4 +1,4 @@
-// RotaFlow v5.2 — Suplinitor apare in orice luna cu ture active — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v5.3 — Verificare 2D+1S per zi in butonul Verifica — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -676,6 +676,19 @@ export default function RotaFlow() {
       const oreNormalaLuna = zileLucratoare * 8;
       if (oreLuna > oreNormalaLuna + 24) {
         rezultate.push({tip:'warn', mesaj:`${m.nume}: ${oreLuna}h luna asta (normal ${oreNormalaLuna}h, +${oreLuna-oreNormalaLuna}h)`});
+      }
+    });
+
+    // ── Regula 6: acoperire zilnica 2D+1S ──
+    zile7.forEach(d => {
+      const ture = displayEchipa.map(m => getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride,oreAcumulate).type);
+      const nD = ture.filter(t => t==='D').length;
+      const nS = ture.filter(t => t==='S').length;
+      if (nD < 2 || nS < 1) {
+        rezultate.push({
+          tip:'err',
+          mesaj:`${fmtDate(d)} (${['Lu','Ma','Mi','Jo','Vi','Sâ','Du'][d.getDay()===0?6:d.getDay()-1]}): ${nD}D+${nS}S — necesar minim 2D+1S`
+        });
       }
     });
 
