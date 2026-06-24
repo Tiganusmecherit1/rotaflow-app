@@ -12,20 +12,26 @@ export async function POST(req: Request) {
 
     // Salveaza turele calculate in ture_mirror
     if (ture && ture.length > 0) {
-      // Sterge turele vechi
       const dates = [...new Set(ture.map((t: any) => t.data))] as string[]
       await sb.from('ture_mirror').delete().in('data', dates)
-      // Insereaza turele noi
       const { error } = await sb.from('ture_mirror').insert(ture)
       if (error) throw error
     }
 
-    // Trimite notificare
+    // Trimite notificare cu data si ora exacta
     if (notificare) {
+      const acum = new Date()
+      const zi = String(acum.getDate()).padStart(2,'0')
+      const luna = String(acum.getMonth()+1).padStart(2,'0')
+      const an = acum.getFullYear()
+      const ora = String(acum.getHours()).padStart(2,'0')
+      const min = String(acum.getMinutes()).padStart(2,'0')
+      const dataOra = `${zi}/${luna}/${an} ${ora}:${min}`
+
       await sb.from('notificari').insert({
-        titlu: notificare.titlu,
-        mesaj: notificare.mesaj,
-        tip: notificare.tip || 'program',
+        titlu: 'Bază de date sincronizată',
+        mesaj: dataOra,
+        tip: 'program',
         citita_de: [],
       })
     }
