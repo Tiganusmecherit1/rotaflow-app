@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check } from 'lucide-react';
+import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Cloud } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -752,6 +752,34 @@ export default function RotaFlow() {
     addLog(`PDF exportat: ${luna}`);
   };
 
+  // ── Sincronizare cu baza de date ──
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncOk, setSyncOk] = useState(false);
+
+  const sincronizeazaDB = async () => {
+    setSyncLoading(true); setSyncOk(false);
+    try {
+      await fetch('/api/sync-overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          overrides: [],
+          notificare: {
+            titlu: 'Program actualizat',
+            mesaj: `Programul a fost modificat pentru săptămâna ${weekStart.toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' })}. Verifică turele tale în aplicație.`,
+            tip: 'program',
+          }
+        }),
+      });
+      addLog(`✓ Notificare trimisă către angajați`);
+      setSyncOk(true);
+      setTimeout(() => setSyncOk(false), 3000);
+    } catch (e) {
+      addLog('✗ Eroare la sincronizare');
+    }
+    setSyncLoading(false);
+  };
+
   const displayEchipa = useMemo(()=>suplinitorFinal?[...echipa,SUPLINITOR_OBJ]:echipa,[echipa,suplinitorFinal]);
   const clasament = useMemo(()=>[...echipa].map(m=>({...m,...calcScor(m,weekStart)})).sort((a,b)=>b.scor-a.scor),[echipa,weekStart,calcScor]);
 
@@ -824,6 +852,17 @@ export default function RotaFlow() {
             </button>
             <button onClick={()=>window.print()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-300 text-[12px] font-semibold hover:bg-zinc-700 transition-all">
               <Printer size={13}/> Print
+            </button>
+            <button onClick={sincronizeazaDB} disabled={syncLoading}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] font-semibold transition-all
+                ${syncOk ? 'bg-green-900/50 border-green-500/40 text-green-300' : 'bg-blue-900/40 border-blue-500/30 text-blue-300 hover:bg-blue-800/50'}
+                disabled:opacity-50`}>
+              {syncLoading
+                ? <><span className="w-3 h-3 border border-blue-400/40 border-t-blue-300 rounded-full animate-spin"/><span>Sincronizare...</span></>
+                : syncOk
+                  ? <><Check size={13}/> Sincronizat!</>
+                  : <><Cloud size={13}/> Sincronizează DB</>
+              }
             </button>
             <button onClick={()=>setShowCO(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-900/40 border border-sky-500/30 text-sky-300 text-[12px] font-semibold hover:bg-sky-800/50 transition-all">
               <Calendar size={13}/> Concedii
