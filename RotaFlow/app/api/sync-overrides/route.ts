@@ -30,9 +30,9 @@ export async function POST(req: Request) {
 
       await sb.from('notificari').insert({
         titlu: 'Bază de date sincronizată',
-        mesaj: dataOra,
+        descriere: dataOra,
         tip: 'program',
-        citita_de: [],
+        citita: false,
       })
     }
 
