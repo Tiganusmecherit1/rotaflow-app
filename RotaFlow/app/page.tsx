@@ -1,4 +1,4 @@
-// RotaFlow v4.9 — Buton Verifica saptamana cu raport complet — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v5.0 — Suplinitor in PDF (calendar si statistici) — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -1638,16 +1638,32 @@ export default function RotaFlow() {
     // Tabel ture zilnice
     const zileCols = Array.from({length:nrZile},(_,i)=>(i+1).toString());
     const head = [['Angajat', ...zileCols]];
-    const body = echipa.map(m => {
-      const row: string[] = [faraDiacritice(m.nume)];
-      for(let i=0;i<nrZile;i++){
-        const d=new Date(yr,mo,i+1);
-        const t=getTuraW(d,m);
-        const base=t.type.replace('↔','');
-        row.push(base==='D'?'D':base==='S'?'S':base==='CO'?'CO':base==='CM'?'CM':base==='AN'?'AN':'L');
-      }
-      return row;
-    });
+
+    // Verificam daca suplinitorul are ture in luna respectiva
+    const tureSup: string[] = [faraDiacritice('Suplinitor (Cta)')];
+    let supAreOre = false;
+    for(let i=0;i<nrZile;i++){
+      const d=new Date(yr,mo,i+1);
+      const t=getTuraW(d,SUPLINITOR_OBJ);
+      const base=t.type.replace('↔','');
+      const val = base==='D'?'D':base==='S'?'S':base==='L'?'':base;
+      if(base==='D'||base==='S') supAreOre=true;
+      tureSup.push(val);
+    }
+
+    const body = [
+      ...echipa.map(m => {
+        const row: string[] = [faraDiacritice(m.nume)];
+        for(let i=0;i<nrZile;i++){
+          const d=new Date(yr,mo,i+1);
+          const t=getTuraW(d,m);
+          const base=t.type.replace('↔','');
+          row.push(base==='D'?'D':base==='S'?'S':base==='CO'?'CO':base==='CM'?'CM':base==='AN'?'AN':'');
+        }
+        return row;
+      }),
+      ...(supAreOre ? [tureSup] : []),
+    ];
 
     autoTable(doc, {
       head, body, startY: 25,
@@ -1656,6 +1672,11 @@ export default function RotaFlow() {
       columnStyles: { 0: { halign: 'left', cellWidth: 28, fontStyle: 'bold' } },
       didParseCell: (data) => {
         const v = data.cell.raw as string;
+        // Randul suplinitorului — fundal amber
+        if (supAreOre && data.row.index === echipa.length && data.section === 'body') {
+          data.cell.styles.fillColor = [254, 243, 199];
+          data.cell.styles.textColor = [120, 53, 15];
+        }
         if(v==='D') { data.cell.styles.fillColor=[219,234,254]; data.cell.styles.textColor=[30,64,175]; }
         else if(v==='S') { data.cell.styles.fillColor=[243,232,255]; data.cell.styles.textColor=[126,34,206]; }
         else if(v==='CO') { data.cell.styles.fillColor=[254,242,242]; data.cell.styles.textColor=[185,28,28]; }
@@ -1670,11 +1691,27 @@ export default function RotaFlow() {
     doc.text(faraDiacritice('Statistici lunare'), 14, statsY);
     autoTable(doc, {
       head:[['Angajat','Zile lucrate','Ore lucrate','Sarbatori lucrate','CO ramas','CM','Abs. Nemot.','Scor performanta']],
-      body: echipa.map(m=>{
-        const s=calcScor(m,refDate);
-        return[faraDiacritice(m.nume),s.zile.toString(),`${s.ore}h`,s.sarbLucrate.toString(),m.zileCO.toString(),s.zileCM.toString(),s.zileAN.toString(),`${s.scor}p`];
-      }),
+      body: [
+        ...echipa.map(m=>{
+          const s=calcScor(m,refDate);
+          return[faraDiacritice(m.nume),s.zile.toString(),`${s.ore}h`,s.sarbLucrate.toString(),m.zileCO.toString(),s.zileCM.toString(),s.zileAN.toString(),`${s.scor}p`];
+        }),
+        // Suplinitor — adaugat doar daca are ore in luna respectiva
+        ...(() => {
+          const sSup = calcScor(SUPLINITOR_OBJ, refDate);
+          if (sSup.ore === 0) return [];
+          return [[faraDiacritice('Suplinitor (Cta)'), sSup.zile.toString(), `${sSup.ore}h`, sSup.sarbLucrate.toString(), '—', '—', '—', '—']];
+        })(),
+      ],
       startY: statsY+4, styles:{fontSize:9}, headStyles:{fillColor:[0,120,212]},
+      bodyStyles: { textColor: [220,220,220] },
+      didParseCell: (data: any) => {
+        // Evidentiaza randul suplinitorului
+        if (data.row.index === echipa.length && data.section === 'body') {
+          data.cell.styles.fillColor = [40, 30, 10];
+          data.cell.styles.textColor = [251, 191, 36];
+        }
+      }
     });
 
     doc.save(`RotaFlow_Pontaj_${luna.replace(' ','_')}.pdf`);
