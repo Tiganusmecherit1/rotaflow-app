@@ -1,4 +1,4 @@
-// RotaFlow v5.0 — Suplinitor in PDF (calendar si statistici) — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v5.1 — Suplinitor in tab Luna + Statistici + fix print styles — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -553,15 +553,21 @@ const PRINT_STYLES = `
   .print-table { width: 100%; border-collapse: collapse; }
   .print-table th, .print-table td { border: 1px solid #ccc; padding: 6px 10px; text-align: center; font-size: 11px; }
   .print-table th { background: #0078d4; color: white; font-weight: bold; }
-  .print-D { background: #dbeafe; color: #1e40af; font-weight: bold; }
-  .print-S { background: #f3e8ff; color: #7e22ce; font-weight: bold; }
-  .print-L { background: #f9fafb; color: #9ca3af; }
-  .print-CO { background: #fef2f2; color: #dc2626; font-weight: bold; }
-  .print-CM { background: #fff7ed; color: #ea580c; font-weight: bold; }
-  .print-AN { background: #fef2f2; color: #b91c1c; font-weight: bold; }
+  .print-D { background: #dbeafe !important; color: #1e40af !important; font-weight: bold !important; }
+  .print-S { background: #f3e8ff !important; color: #7e22ce !important; font-weight: bold !important; }
+  .print-L { background: transparent !important; color: transparent !important; border: 1px solid #e5e7eb !important; }
+  .print-CO { background: #fef2f2 !important; color: #dc2626 !important; font-weight: bold !important; }
+  .print-CM { background: #fff7ed !important; color: #ea580c !important; font-weight: bold !important; }
+  .print-AN { background: #fef2f2 !important; color: #b91c1c !important; font-weight: bold !important; }
   .print-header { margin-bottom: 16px; }
   .print-header h1 { font-size: 20px; font-weight: bold; color: #0078d4; }
   .print-header p { font-size: 12px; color: #666; }
+  /* Sumar vizibil la print */
+  .print-sumar { display: block !important; margin-top: 20px; }
+  .print-sumar table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .print-sumar th { background: #0078d4 !important; color: white !important; padding: 6px 10px; border: 1px solid #ccc; font-weight: bold; }
+  .print-sumar td { padding: 5px 10px; border: 1px solid #ccc; color: #111 !important; background: white !important; }
+  .print-sumar tr:nth-child(even) td { background: #f8fafc !important; }
   @page { margin: 1.5cm; size: A4 landscape; }
 }
 `;
@@ -2342,15 +2348,17 @@ export default function RotaFlow() {
                     </tr>
                   </thead>
                   <tbody>
-                    {echipa.map((m,mi)=>(
+                    {displayEchipa.map((m,mi)=>(
                       <tr key={mi}>
                         <td className="pl-2 pr-2 py-1">
                           <div className="flex items-center gap-2">
                             <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0"
-                              style={{background:AVATAR_COLORS[mi%5]+'22',color:AVATAR_COLORS[mi%5],border:`1px solid ${AVATAR_COLORS[mi%5]}44`}}>
-                              {m.nume.substring(0,2).toUpperCase()}
+                              style={m.id===999
+                                ? {background:'#f59e0b22',color:'#f59e0b',border:'1px solid #f59e0b44'}
+                                : {background:AVATAR_COLORS[mi%5]+'22',color:AVATAR_COLORS[mi%5],border:`1px solid ${AVATAR_COLORS[mi%5]}44`}}>
+                              {m.id===999?'SUP':m.nume.substring(0,2).toUpperCase()}
                             </div>
-                            <span className="font-semibold text-[12px] whitespace-nowrap">{m.nume}</span>
+                            <span className="font-semibold text-[12px] whitespace-nowrap">{m.id===999?'Suplinitor':m.nume}</span>
                           </div>
                         </td>
                         {zileLuna.map((d,di)=>{
@@ -2361,7 +2369,7 @@ export default function RotaFlow() {
                           return (
                             <td key={di} className="text-center">
                               <div className={`relative text-[10px] font-black py-1.5 rounded-lg ${style} ${sarb&&!['L','CO','CM','AN'].includes(baseType)?'ring-1 ring-amber-400/50':''} print-${baseType}`}>
-                                {t.label}
+                                {baseType==='L'?'':t.label}
                               </div>
                             </td>
                           );
@@ -2383,33 +2391,39 @@ export default function RotaFlow() {
                   <span className="text-[11px] text-zinc-500">{fmtMonth(weekStart)}</span>
                 </div>
                 <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {echipa.map((m,i)=>{
+                  {displayEchipa.map((m,i)=>{
                     const st=calcScor(m,weekStart);
+                    const isSup = m.id===999;
+                    if (isSup && st.ore===0) return null; // suplinitor fara ore nu apare
                     return (
-                      <div key={i} className="bg-black/20 rounded-xl p-4">
+                      <div key={i} className={`rounded-xl p-4 ${isSup?'bg-amber-950/20 border border-amber-500/20':'bg-black/20'}`}>
                         <div className="flex items-center gap-2 mb-3">
                           <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold"
-                            style={{background:AVATAR_COLORS[i%5]+'22',color:AVATAR_COLORS[i%5],border:`1px solid ${AVATAR_COLORS[i%5]}44`}}>
-                            {m.nume.substring(0,2).toUpperCase()}
+                            style={isSup
+                              ? {background:'#f59e0b22',color:'#f59e0b',border:'1px solid #f59e0b44'}
+                              : {background:AVATAR_COLORS[i%5]+'22',color:AVATAR_COLORS[i%5],border:`1px solid ${AVATAR_COLORS[i%5]}44`}}>
+                            {isSup?'SUP':m.nume.substring(0,2).toUpperCase()}
                           </div>
-                          <span className="font-semibold text-[13px]">{m.nume}</span>
+                          <span className="font-semibold text-[13px]">{isSup?'Suplinitor (Cta)':m.nume}</span>
                         </div>
                         <div className="grid grid-cols-3 gap-1.5 mb-1.5">
-                          {[{v:`${st.ore}h`,l:'Ore',c:'text-[#60cdff]'},{v:st.zile,l:'Zile',c:'text-[#60cdff]'},{v:st.sarbLucrate,l:'Sărb.',c:'text-amber-400'}].map(({v,l,c})=>(
+                          {[{v:`${st.ore}h`,l:'Ore',c:isSup?'text-amber-400':'text-[#60cdff]'},{v:st.zile,l:'Zile',c:isSup?'text-amber-400':'text-[#60cdff]'},{v:st.sarbLucrate,l:'Sărb.',c:'text-amber-400'}].map(({v,l,c})=>(
                             <div key={l} className="bg-black/30 rounded-lg py-1.5 text-center">
                               <div className={`text-[13px] font-bold ${c}`}>{v}</div>
                               <div className="text-[9px] text-zinc-500 mt-0.5">{l}</div>
                             </div>
                           ))}
                         </div>
-                        <div className="grid grid-cols-3 gap-1.5">
-                          {[{v:st.zileCM,l:'CM',c:'text-orange-400'},{v:st.zileAN,l:'Abs.N.',c:'text-red-400'},{v:m.zileCO,l:'CO răm.',c:'text-zinc-300'}].map(({v,l,c})=>(
-                            <div key={l} className="bg-black/30 rounded-lg py-1.5 text-center">
-                              <div className={`text-[13px] font-bold ${c}`}>{v}</div>
-                              <div className="text-[9px] text-zinc-500 mt-0.5">{l}</div>
-                            </div>
-                          ))}
-                        </div>
+                        {!isSup && (
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {[{v:st.zileCM,l:'CM',c:'text-orange-400'},{v:st.zileAN,l:'Abs.N.',c:'text-red-400'},{v:m.zileCO,l:'CO răm.',c:'text-zinc-300'}].map(({v,l,c})=>(
+                              <div key={l} className="bg-black/30 rounded-lg py-1.5 text-center">
+                                <div className={`text-[13px] font-bold ${c}`}>{v}</div>
+                                <div className="text-[9px] text-zinc-500 mt-0.5">{l}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
