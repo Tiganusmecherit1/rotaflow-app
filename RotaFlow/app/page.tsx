@@ -1,4 +1,4 @@
-// RotaFlow v4.2 — Libere pre-criza pentru max 6 consecutive — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v4.3 — Click cycling pe celule (D→S→sterge) — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -2081,33 +2081,75 @@ export default function RotaFlow() {
                             const baseType=t.type.replace('↔','');
                             const style=SHIFT_STYLE[baseType]??SHIFT_STYLE.L;
                             const dStr=fmtDateInput(d);
-                            const isDragSrc=dragSrc?.angajatId===m.id&&dragSrc?.data===dStr;
-                            const isDragOver=dragOver?.angajatId===m.id&&dragOver?.data===dStr;
-                            const isDraggable=!['CO','CM','AN'].includes(baseType);
+                            const isLocked=['CO','CM','AN'].includes(baseType);
+                            const hasManualOverride=turaOverride.some(o=>o.id.startsWith('drag_')&&o.angajatId===m.id&&o.data===dStr);
+
+                            const handleCellClick = () => {
+                              if (isLocked) return;
+                              // Ciclu: rotatie_normala → D → S → sterge_override (inapoi la normal)
+                              // Daca are override manual → urmatorul pas
+                              const overrideActiv = turaOverride.find(o=>o.id.startsWith('drag_')&&o.angajatId===m.id&&o.data===dStr);
+                              let turaNouaType: 'D'|'S'|null = null;
+                              if (!overrideActiv) {
+                                turaNouaType = 'D'; // primul click → D
+                              } else if (overrideActiv.tura==='D') {
+                                turaNouaType = 'S'; // al doilea click → S
+                              } else {
+                                turaNouaType = null; // al treilea click → sterge
+                              }
+
+                              if (turaNouaType === null) {
+                                // Sterge override-ul
+                                setTuraOverride(prev=>prev.filter(o=>!(o.id.startsWith('drag_')&&o.angajatId===m.id&&o.data===dStr)));
+                                setDragError(null);
+                                return;
+                              }
+
+                              // Validari S->D
+                              const ziPrev=new Date(d.getTime()-86400000);
+                              const ziUrm=new Date(d.getTime()+86400000);
+                              const turaPrevM=getTuraW(ziPrev,m).type;
+                              const turaUrmM=getTuraW(ziUrm,m).type;
+                              if (turaNouaType==='D' && turaPrevM==='S') {
+                                setDragError(`S→D interzis: ${m.nume} a făcut S ieri`);
+                                setTimeout(()=>setDragError(null),3000); return;
+                              }
+                              if (turaNouaType==='S' && turaUrmM==='D') {
+                                setDragError(`S→D interzis: ${m.nume} face D mâine`);
+                                setTimeout(()=>setDragError(null),3000); return;
+                              }
+
+                              // Validare 48h
+                              const oreAct = calcOreSaptamana(m, weekStart, echipa, suplinitorFinal, swapuri, turaOverride);
+                              const turaVeche = baseType;
+                              const delta = (['D','S'].includes(turaNouaType)?8:0) - (['D','S'].includes(turaVeche)?8:0);
+                              if (oreAct + delta > 48) {
+                                setDragError(`${m.nume} ar depăși 48h/săptămână`);
+                                setTimeout(()=>setDragError(null),3000); return;
+                              }
+
+                              const expiraLaOv = fmtDateInput(new Date(weekStart.getTime()+7*86400000));
+                              setTuraOverride(prev=>[
+                                ...prev.filter(o=>!(o.id.startsWith('drag_')&&o.angajatId===m.id&&o.data===dStr)),
+                                {id:`drag_${m.id}_${dStr}`, angajatId:m.id, data:dStr, tura:turaNouaType, expiraLa:expiraLaOv}
+                              ]);
+                              setDragError(null);
+                            };
+
                             return (
                               <td key={di} className="text-center">
                                 <div
-                                  draggable={isDraggable}
-                                  onDragStart={isDraggable ? ()=>setDragSrc({angajatId:m.id,data:dStr,tura:baseType}) : undefined}
-                                  onDragEnd={()=>{setDragSrc(null);setDragOver(null);}}
-                                  onDragOver={e=>{e.preventDefault();setDragOver({angajatId:m.id,data:dStr});}}
-                                  onDragLeave={()=>setDragOver(null)}
-                                  onDrop={e=>{
-                                    e.preventDefault();
-                                    if(dragSrc && dragSrc.data===dStr && dragSrc.angajatId!==m.id){
-                                      aplicaDragDrop(dragSrc, m.id);
-                                    }
-                                    setDragOver(null);
-                                  }}
-                                  className={`relative text-[13px] font-black py-3 px-2 rounded-xl transition-all
+                                  onClick={handleCellClick}
+                                  title={isLocked ? '' : '1 click = D  |  2 clicks = S  |  3 clicks = șterge'}
+                                  className={`relative text-[13px] font-black py-3 px-2 rounded-xl transition-all select-none
                                     ${style}
                                     ${t.swapped?'ring-2 ring-amber-400/60':''}
-                                    ${isDragSrc?'opacity-40 scale-95':''}
-                                    ${isDragOver&&dragSrc&&dragSrc.data===dStr&&dragSrc.angajatId!==m.id?'ring-2 ring-white/60 scale-105':''}
-                                    ${isDraggable&&!isDragSrc?'cursor-grab active:cursor-grabbing':'cursor-default'}
+                                    ${hasManualOverride?'ring-2 ring-white/30':''}
+                                    ${!isLocked?'cursor-pointer active:scale-95':'cursor-default'}
                                   `}>
                                   {t.label}
                                   {sarb&&!['L','CO','CM','AN'].includes(baseType)&&<span className="absolute -top-1.5 -right-1 text-amber-400 text-[10px]">★</span>}
+                                  {hasManualOverride&&<span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-white/50"/>}
                                 </div>
                               </td>
                             );
@@ -2127,7 +2169,7 @@ export default function RotaFlow() {
                 <div className="flex items-center gap-2 text-[12px] text-zinc-400"><span className="text-amber-400/80 text-[11px]">↔</span> Swap</div>
                 <div className="flex items-center gap-2 text-[12px] text-zinc-400"><span className="text-amber-400">★</span> Sărbătoare</div>
                 <div className="ml-auto flex items-center gap-1.5 text-[11px] text-zinc-600">
-                  <span>✥</span> Trage o celulă pe alta pentru a schimba turele
+                  <span>👆</span> Click: D → S → șterge
                 </div>
               </div>
               {dragError && (
