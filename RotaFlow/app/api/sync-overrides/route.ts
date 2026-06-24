@@ -28,12 +28,13 @@ export async function POST(req: Request) {
       const min = String(acum.getMinutes()).padStart(2,'0')
       const dataOra = `${zi}/${luna}/${an} ${ora}:${min}`
 
-      await sb.from('notificari').insert({
+      const { error: notifErr } = await sb.from('notificari').insert({
         titlu: 'Bază de date sincronizată',
         descriere: dataOra,
         tip: 'program',
         citita: false,
       })
+      if (notifErr) console.error('Notificare error:', notifErr)
     }
 
     return NextResponse.json({ ok: true, count: ture?.length ?? 0 })
