@@ -1,4 +1,4 @@
-// RotaFlow v4.3 — Click cycling pe celule (D→S→sterge) — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v4.4 — Click stanga=D, click dreapta=S, din nou=sterge — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -2084,22 +2084,23 @@ export default function RotaFlow() {
                             const isLocked=['CO','CM','AN'].includes(baseType);
                             const hasManualOverride=turaOverride.some(o=>o.id.startsWith('drag_')&&o.angajatId===m.id&&o.data===dStr);
 
-                            const handleCellClick = () => {
+                            const handleCellClick = (e: React.MouseEvent) => {
                               if (isLocked) return;
-                              // Ciclu: rotatie_normala → D → S → sterge_override (inapoi la normal)
-                              // Daca are override manual → urmatorul pas
+                              e.preventDefault();
+
                               const overrideActiv = turaOverride.find(o=>o.id.startsWith('drag_')&&o.angajatId===m.id&&o.data===dStr);
-                              let turaNouaType: 'D'|'S'|null = null;
-                              if (!overrideActiv) {
-                                turaNouaType = 'D'; // primul click → D
-                              } else if (overrideActiv.tura==='D') {
-                                turaNouaType = 'S'; // al doilea click → S
+                              const isRightClick = e.button === 2 || e.ctrlKey;
+
+                              // Click dreapta sau Ctrl+click → S
+                              // Click stanga → D dacă nu are override, șterge dacă are
+                              let turaNouaType: 'D'|'S'|null;
+                              if (isRightClick) {
+                                turaNouaType = overrideActiv?.tura === 'S' ? null : 'S';
                               } else {
-                                turaNouaType = null; // al treilea click → sterge
+                                turaNouaType = overrideActiv ? null : 'D';
                               }
 
                               if (turaNouaType === null) {
-                                // Sterge override-ul
                                 setTuraOverride(prev=>prev.filter(o=>!(o.id.startsWith('drag_')&&o.angajatId===m.id&&o.data===dStr)));
                                 setDragError(null);
                                 return;
@@ -2140,7 +2141,8 @@ export default function RotaFlow() {
                               <td key={di} className="text-center">
                                 <div
                                   onClick={handleCellClick}
-                                  title={isLocked ? '' : '1 click = D  |  2 clicks = S  |  3 clicks = șterge'}
+                                  onContextMenu={handleCellClick}
+                                  title={isLocked ? '' : 'Click stânga = D | Click dreapta = S | Click din nou = șterge'}
                                   className={`relative text-[13px] font-black py-3 px-2 rounded-xl transition-all select-none
                                     ${style}
                                     ${t.swapped?'ring-2 ring-amber-400/60':''}
@@ -2169,7 +2171,7 @@ export default function RotaFlow() {
                 <div className="flex items-center gap-2 text-[12px] text-zinc-400"><span className="text-amber-400/80 text-[11px]">↔</span> Swap</div>
                 <div className="flex items-center gap-2 text-[12px] text-zinc-400"><span className="text-amber-400">★</span> Sărbătoare</div>
                 <div className="ml-auto flex items-center gap-1.5 text-[11px] text-zinc-600">
-                  <span>👆</span> Click: D → S → șterge
+                  <span>👆</span> Stânga = D · Dreapta = S · din nou = șterge
                 </div>
               </div>
               {dragError && (
