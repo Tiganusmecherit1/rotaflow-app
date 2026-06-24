@@ -1,4 +1,4 @@
-// RotaFlow v4.7 — Plan criza simplu: S fix saptamana, D ceilalti, Du liber — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v4.8 — Override manual (drag_) prioritate peste criza_pre_ — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -301,9 +301,15 @@ function getTura(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitorActiv: b
     if (inCO(d, m)) return { type: 'CO', label: 'CO' };
   }
 
-  // Override de criză
+  // Override manual (drag_) are prioritate maxima dupa CO/CM/AN
+  const overrideManual = turaOverride.find(o =>
+    o.id.startsWith('drag_') && o.angajatId === m.id && o.data === dStr && parseD(o.expiraLa) > d
+  );
+  if (overrideManual) return { type: overrideManual.tura, label: overrideManual.tura, swapped: false };
+
+  // Override de criza (criza_, criza_pre_, criza_comp_, criza_tranzitie_)
   const override = turaOverride.find(o =>
-    o.angajatId === m.id && o.data === dStr && parseD(o.expiraLa) > d
+    !o.id.startsWith('drag_') && o.angajatId === m.id && o.data === dStr && parseD(o.expiraLa) > d
   );
   if (override) return { type: override.tura, label: override.tura, swapped: false };
 
