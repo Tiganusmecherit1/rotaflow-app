@@ -1,4 +1,4 @@
-// RotaFlow v5.1 — Suplinitor in tab Luna + Statistici + fix print styles — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v5.2 — Suplinitor apare in orice luna cu ture active — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -1840,6 +1840,15 @@ export default function RotaFlow() {
     return Array.from({length:n},(_,i)=>new Date(yr,mo,i+1));
   }, [lunaStart]);
 
+  // DisplayEchipa pentru tab Luna — include suplinitorul daca are ture in luna afisata
+  const displayEchipaLuna = useMemo(() => {
+    const supAreOreInLuna = zileLuna.some(d => {
+      const t = getTura(d, SUPLINITOR_OBJ, echipa, suplinitorFinal, swapuri, turaOverride, oreAcumulate);
+      return t.type === 'D' || t.type === 'S';
+    });
+    return supAreOreInLuna ? [...echipa, SUPLINITOR_OBJ] : echipa;
+  }, [echipa, zileLuna, suplinitorFinal, swapuri, turaOverride, oreAcumulate]);
+
   const inputCls = "w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-[#60cdff]/50 transition-all";
 
   if (seIncarca) {
@@ -2348,7 +2357,7 @@ export default function RotaFlow() {
                     </tr>
                   </thead>
                   <tbody>
-                    {displayEchipa.map((m,mi)=>(
+                    {displayEchipaLuna.map((m,mi)=>(
                       <tr key={mi}>
                         <td className="pl-2 pr-2 py-1">
                           <div className="flex items-center gap-2">
@@ -2391,7 +2400,7 @@ export default function RotaFlow() {
                   <span className="text-[11px] text-zinc-500">{fmtMonth(weekStart)}</span>
                 </div>
                 <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {displayEchipa.map((m,i)=>{
+                  {displayEchipaLuna.map((m,i)=>{
                     const st=calcScor(m,weekStart);
                     const isSup = m.id===999;
                     if (isSup && st.ore===0) return null; // suplinitor fara ore nu apare
