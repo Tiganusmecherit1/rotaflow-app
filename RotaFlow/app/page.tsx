@@ -891,23 +891,25 @@ export default function RotaFlow() {
           tureCalculate.push({ angajat_id: m.id, data: dStr, tura: t.type });
         });
       }
-      await fetch('/api/sync-overrides', {
+      addLog(`Trimit ${tureCalculate.length} ture...`);
+      const res = await fetch('/api/sync-overrides', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ture: tureCalculate,
-          notificare: {
-            titlu: 'Program actualizat',
-            mesaj: `Programul sincronizat pentru săptămâna ${weekStart.toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' })}. Verifică turele în aplicație.`,
-            tip: 'program',
-          },
+          notificare: { titlu: 'sync', mesaj: 'sync', tip: 'program' },
         }),
       });
-      addLog(`✓ Sincronizat — ${tureCalculate.length} ture trimise`);
+      const json = await res.json();
+      if (!res.ok) {
+        addLog(`✗ Eroare API: ${json.error || res.status}`);
+        setSyncLoading(false); return;
+      }
+      addLog(`✓ Sincronizat — ${tureCalculate.length} ture. Răspuns: ${JSON.stringify(json)}`);
       setSyncOk(true);
       setTimeout(() => setSyncOk(false), 3000);
-    } catch {
-      addLog('✗ Eroare la sincronizare');
+    } catch(e: any) {
+      addLog(`✗ Eroare sincronizare: ${e?.message || String(e)}`);
     }
     setSyncLoading(false);
   }, [echipa, suplinitorFinal, swapuri, turaOverride, oreAcumulate, weekStart, addLog]);
