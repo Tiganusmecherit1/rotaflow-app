@@ -1,4 +1,4 @@
-// RotaFlow v4.8 — Override manual (drag_) prioritate peste criza_pre_ — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v4.9 — Buton Verifica saptamana cu raport complet — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -586,6 +586,100 @@ export default function RotaFlow() {
   const [dragSrc, setDragSrc] = useState<{angajatId: number; data: string; tura: string} | null>(null);
   const [dragOver, setDragOver] = useState<{angajatId: number; data: string} | null>(null);
   const [dragError, setDragError] = useState<string | null>(null);
+  const [showVerificare, setShowVerificare] = useState(false);
+  const [rezultateVerificare, setRezultateVerificare] = useState<{tip:'ok'|'warn'|'err'; mesaj: string}[]>([]);
+
+  const verificaSaptamana = () => {
+    const rezultate: {tip:'ok'|'warn'|'err'; mesaj: string}[] = [];
+    const zile7 = Array.from({length:7},(_,i)=>new Date(weekStart.getTime()+i*86400000));
+
+    displayEchipa.forEach(m => {
+      if (m.id === 999) return; // suplinitorul nu are reguli proprii
+
+      // ── Regula 1: S→D ──
+      let turaPrev = '';
+      for (let i = -1; i < 7; i++) {
+        const d = new Date(weekStart.getTime()+i*86400000);
+        const t = getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride,oreAcumulate);
+        if (i >= 0 && turaPrev === 'S' && t.type === 'D') {
+          rezultate.push({tip:'err', mesaj:`${m.nume}: S→D interzis pe ${fmtDate(d)}`});
+        }
+        turaPrev = t.type;
+      }
+
+      // ── Regula 2: 48h în săptămâna curentă ──
+      const oreSapt = calcOreSaptamana(m, weekStart, echipa, suplinitorFinal, swapuri, turaOverride);
+      if (oreSapt > 48) {
+        rezultate.push({tip:'err', mesaj:`${m.nume}: ${oreSapt}h în săptămâna curentă (limită legală 48h)`});
+      } else if (oreSapt > 40) {
+        rezultate.push({tip:'warn', mesaj:`${m.nume}: ${oreSapt}h săptămâna asta (peste 40h normal)`});
+      }
+
+      // ── Regula 3: 48h în orice fereastră de 7 zile consecutive ──
+      // Verificăm 3 zile înainte + săptămâna curentă
+      for (let start = -3; start <= 0; start++) {
+        const dStart = new Date(weekStart.getTime()+start*86400000);
+        let ore7 = 0;
+        for (let j = 0; j < 7; j++) {
+          const d = new Date(dStart.getTime()+j*86400000);
+          const t = getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride,oreAcumulate);
+          if (t.type==='D'||t.type==='S') ore7+=8;
+        }
+        if (ore7 > 48) {
+          rezultate.push({tip:'err', mesaj:`${m.nume}: ${ore7}h în fereastra 7 zile din ${fmtDate(dStart)}`});
+          break; // o singura eroare per angajat
+        }
+      }
+
+      // ── Regula 4: zile consecutive fără pauză ──
+      let consec = 0;
+      let consecMax = 0;
+      let consecStart: Date | null = null;
+      for (let i = -6; i < 7; i++) {
+        const d = new Date(weekStart.getTime()+i*86400000);
+        const t = getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride,oreAcumulate);
+        if (t.type==='D'||t.type==='S') {
+          if (consec===0) consecStart=d;
+          consec++;
+          if (consec>consecMax) consecMax=consec;
+        } else {
+          consec=0;
+        }
+      }
+      if (consecMax > 6) {
+        rezultate.push({tip:'err', mesaj:`${m.nume}: ${consecMax} zile consecutive fără pauză (max 6)`});
+      } else if (consecMax === 6) {
+        rezultate.push({tip:'warn', mesaj:`${m.nume}: 6 zile consecutive (la limită)`});
+      }
+
+      // ── Regula 5: ore lunare ──
+      const luna = new Date(weekStart.getFullYear(), weekStart.getMonth(), 1);
+      const lunaEnd = new Date(weekStart.getFullYear(), weekStart.getMonth()+1, 0);
+      let oreLuna = 0;
+      for (let d = new Date(luna); d <= lunaEnd; d=new Date(d.getTime()+86400000)) {
+        const t = getTura(d,m,echipa,suplinitorFinal,swapuri,turaOverride,oreAcumulate);
+        if (t.type==='D'||t.type==='S') oreLuna+=8;
+      }
+      const zileLucratoare = (() => {
+        let zl=0;
+        for (let d=new Date(luna); d<=lunaEnd; d=new Date(d.getTime()+86400000)) {
+          const wd=d.getDay(); if(wd!==0&&wd!==6) zl++;
+        }
+        return zl;
+      })();
+      const oreNormalaLuna = zileLucratoare * 8;
+      if (oreLuna > oreNormalaLuna + 24) {
+        rezultate.push({tip:'warn', mesaj:`${m.nume}: ${oreLuna}h luna asta (normal ${oreNormalaLuna}h, +${oreLuna-oreNormalaLuna}h)`});
+      }
+    });
+
+    if (rezultate.length === 0) {
+      rezultate.push({tip:'ok', mesaj:'✓ Toate regulile sunt respectate pentru săptămâna afișată!'});
+    }
+
+    setRezultateVerificare(rezultate);
+    setShowVerificare(true);
+  };
   const [showPlanCriza, setShowPlanCriza] = useState(false);
   const [planCriza, setPlanCriza] = useState<PlanCriza | null>(null);
   const [planCrizaStart, setPlanCrizaStart] = useState(fmtDateInput(new Date()));
@@ -2144,13 +2238,43 @@ export default function RotaFlow() {
                 ))}
                 <div className="flex items-center gap-2 text-[12px] text-zinc-400"><span className="text-amber-400/80 text-[11px]">↔</span> Swap</div>
                 <div className="flex items-center gap-2 text-[12px] text-zinc-400"><span className="text-amber-400">★</span> Sărbătoare</div>
-                <div className="ml-auto flex items-center gap-1.5 text-[11px] text-zinc-600">
-                  <span>👆</span> Stânga = D · Dreapta = S · din nou = șterge
+                <div className="ml-auto flex items-center gap-2">
+                  <span className="text-[11px] text-zinc-600">👆 Stânga = D · Dreapta = S · din nou = șterge</span>
+                  <button onClick={verificaSaptamana}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-900/40 border border-emerald-500/30 text-emerald-300 text-[12px] font-semibold hover:bg-emerald-800/50 transition-all">
+                    <Check size={13}/> Verifică
+                  </button>
                 </div>
               </div>
               {dragError && (
                 <div className="mx-4 mb-3 flex items-center gap-2 bg-red-950/60 border border-red-500/40 text-red-300 text-[12px] font-semibold px-4 py-2 rounded-xl animate-pulse">
                   <AlertTriangle size={14}/> {dragError}
+                </div>
+              )}
+              {/* Modal rezultate verificare */}
+              {showVerificare && (
+                <div className="mx-4 mb-3 bg-[#1c1c1e] border border-white/[0.1] rounded-xl overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.07]">
+                    <span className="text-[13px] font-bold text-white flex items-center gap-2">
+                      <Check size={14} className="text-emerald-400"/> Verificare săptămâna {fmtDate(weekStart)} – {fmtDate(new Date(weekStart.getTime()+6*86400000))}
+                    </span>
+                    <button onClick={()=>setShowVerificare(false)} className="text-zinc-500 hover:text-zinc-300 transition-colors">
+                      <X size={16}/>
+                    </button>
+                  </div>
+                  <div className="p-3 space-y-1.5 max-h-60 overflow-y-auto">
+                    {rezultateVerificare.map((r,i) => (
+                      <div key={i} className={`flex items-start gap-2 rounded-lg px-3 py-2 text-[12px]
+                        ${r.tip==='ok' ? 'bg-emerald-950/40 text-emerald-300' :
+                          r.tip==='err' ? 'bg-red-950/50 text-red-300' :
+                          'bg-amber-950/40 text-amber-300'}`}>
+                        <span className="flex-shrink-0 mt-0.5">
+                          {r.tip==='ok' ? '✓' : r.tip==='err' ? '✗' : '⚠'}
+                        </span>
+                        <span>{r.mesaj}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
