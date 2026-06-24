@@ -1,4 +1,4 @@
-// RotaFlow v4.6 — Plan criza: S fix pe saptamana rotativ — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
+// RotaFlow v4.7 — Plan criza simplu: S fix saptamana, D ceilalti, Du liber — Plan Criza Opt4 + Tranzitie 11Aug + Ore fix
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText } from 'lucide-react';
@@ -418,24 +418,6 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
 
   const plan: PlanCrizaZi[] = [];
 
-  // Calculam zile consecutive lucrate INAINTE de criza (max 7 zile lookback)
-  const consecZile: Record<number, number> = {};
-  const turaPrevZi: Record<number, string> = {};
-  const sCount: Record<number, number> = {};
-  activiStart.forEach(m => { consecZile[m.id] = 0; turaPrevZi[m.id] = 'L'; sCount[m.id] = 0; });
-
-  for (let i = 7; i >= 1; i--) {
-    const dPrev = new Date(dataStart.getTime() - i * 86400000);
-    activiStart.forEach(m => {
-      if (!eAbsent(m, dPrev)) {
-        const tb = getTuraBaza(dPrev, m, echipa, false);
-        if (tb.type === 'D' || tb.type === 'S') consecZile[m.id] = (consecZile[m.id]||0) + 1;
-        else consecZile[m.id] = 0;
-        if (i === 1) turaPrevZi[m.id] = tb.type;
-      }
-    });
-  }
-
   let d = new Date(dataStart);
   const saptamaniProcesate = new Set<string>();
   let rotatieSIdx = 0;
@@ -463,10 +445,12 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
     // Daca nu exista Duminica in intervalul acestei saptamani → suplinitorul nu vine.
     const ziuaSup = zileWE.find(z => z.getDay() === 0) ?? null;
 
-    // Cine face S toata aceasta saptamana (rotativ per saptamana)
+    // Un om face S toata saptamana (rotativ), ceilalti D
+    // Duminica = suplinitorii, toti localii liberi
+    // Regula: max 6 consecutive (Lu-Sa), reset natural Duminica
     const omSSapt = activiStart[rotatieSIdx % activiStart.length].id;
     const omDSapt = activiStart.map(m => m.id).filter(id => id !== omSSapt);
-    let alesOMSaptamana = omSSapt;
+    const alesOMSaptamana = omSSapt;
     rotatieSIdx++;
 
     for (const zi of zileSapt) {
@@ -477,52 +461,13 @@ function genereazaPlanCriza(echipa: Angajat[], dataStartStr: string, concediiSim
       let ziuaSupFlag = false;
 
       if (ziuaSup && fmtDateInput(zi) === fmtDateInput(ziuaSup)) {
-        // Duminica: suplinitorul vine, toti localii liberi → resetam consecutivele
+        // Duminica: suplinitorul vine (2D+2S), toti localii liberi
         ture['SUP'] = '2D+2S';
         ziuaSupFlag = true;
-        activiStart.forEach(m => { consecZile[m.id] = 0; turaPrevZi[m.id] = 'L'; });
       } else {
-        // Zi normala: omSSapt face S, omDSapt fac D
-        // Daca cineva a atins 5 consecutive → ia liber, altcineva preia
-        const mustRest = activiStart.filter(m => (consecZile[m.id] ?? 0) >= 5).map(m => m.id);
-
-        if (mustRest.includes(omSSapt)) {
-          // Omul de S trebuie sa se odihneasca — cel mai putini consecutive din omD preia S
-          ture[omSSapt] = 'L';
-          const inlocuitorS = omDSapt
-            .filter(id => !mustRest.includes(id))
-            .sort((a,b) => (consecZile[a]??0) - (consecZile[b]??0))[0];
-          if (inlocuitorS !== undefined) {
-            ture[inlocuitorS] = 'S';
-            omDSapt.filter(id => id !== inlocuitorS && !mustRest.includes(id)).forEach(id => { ture[id] = 'D'; });
-          } else {
-            // Toti obositi — punem omul de S totusi (fortat)
-            ture[omSSapt] = 'S';
-            omDSapt.filter(id => !mustRest.includes(id)).forEach(id => { ture[id] = 'D'; });
-          }
-        } else {
-          // Normal: omSSapt face S, omDSapt fac D (cei cu must_rest iau L)
-          ture[omSSapt] = 'S';
-          omDSapt.forEach(id => {
-            ture[id] = mustRest.includes(id) ? 'L' : 'D';
-          });
-          // Daca am dat prea multi L si nu avem 2D → readaugam cel mai putin obosit
-          const nrD = Object.values(ture).filter(v => v === 'D').length;
-          if (nrD < 2) {
-            const extra = omDSapt
-              .filter(id => mustRest.includes(id))
-              .sort((a,b) => (consecZile[a]??0) - (consecZile[b]??0));
-            extra.slice(0, 2 - nrD).forEach(id => { ture[id] = 'D'; });
-          }
-        }
-
-        // Actualizam consecutive
-        activiStart.forEach(m => {
-          const t = ture[m.id] as string;
-          if (t === 'D' || t === 'S') consecZile[m.id] = (consecZile[m.id] ?? 0) + 1;
-          else consecZile[m.id] = 0;
-          turaPrevZi[m.id] = t;
-        });
+        // Lu-Sa: omSSapt face S, omDSapt fac D
+        ture[omSSapt] = 'S';
+        omDSapt.forEach(id => { ture[id] = 'D'; });
       }
 
       plan.push({ data: fmtDateInput(zi), ture: ture as Record<number | 'SUP', 'D' | 'S' | 'L' | '2D+2S'>, ziuaSef: ziuaSupFlag, omS: alesOMSaptamana });
