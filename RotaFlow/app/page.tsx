@@ -927,8 +927,11 @@ export default function RotaFlow() {
     setSyncLoading(true); setSyncOk(false);
     try {
       const azi = new Date(); azi.setHours(0,0,0,0);
+      // Calculam zilele pana la 31 Martie anul viitor (garantat acopera tot anul curent)
+      const sfarsitPerioadei = new Date(azi.getFullYear() + 1, 2, 31);
+      const zileTotale = Math.ceil((sfarsitPerioadei.getTime() - azi.getTime()) / 86400000) + 7;
       const tureCalculate: Array<{angajat_id: number; data: string; tura: string}> = [];
-      for (let i = -7; i < 90; i++) {
+      for (let i = -7; i < zileTotale; i++) {
         const d = new Date(azi.getTime() + i * 86400000);
         const dStr = fmtDateInput(d);
         echipa.forEach(m => {
