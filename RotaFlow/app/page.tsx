@@ -1607,10 +1607,15 @@ export default function RotaFlow() {
         const dStr = fmtDateInput(d);
 
         // Disponibili: sub limita de ore si nu in CO
-        const potLucra = echipa.filter(m =>
+        let potLucra = echipa.filter(m =>
           !inCO(d, m) && !inAbsenta(d, m, 'any') &&
           (oreAcc[m.id] || 0) + 8 <= targetOre[m.id]
         );
+
+        // Fallback: daca nu avem minim 3 disponibili, relaxam limita de ore
+        if (potLucra.length < 3) {
+          potLucra = echipa.filter(m => !inCO(d, m) && !inAbsenta(d, m, 'any'));
+        }
 
         // STEP 1: Alege S - cel cu cele mai putine S-uri (echitate D/S)
         // Revenitul din CO are prioritate MICA la S (el ia mai multe D)
@@ -1732,6 +1737,84 @@ export default function RotaFlow() {
 
     setCrizaAplicataInterval({ start: planCriza.dataStart, end: planCriza.dataPlecareSup });
     setTuraOverride(prev => [...prev.filter(o => !o.id.startsWith('criza_')), ...noileOverride]);
+
+    // Auto-verificare si corectie acoperire 2D+1S dupa aplicarea planului
+    // Scanam 90 de zile dupa criza si corectam zilele cu probleme
+    // FARA sa atingem zilele din criza (override-urile criza_ existente)
+    {
+      const startScan = parseD(planCriza.dataStart);
+      const endScan = new Date(startScan.getTime() + 90 * 86400000);
+      const fixuriExtra: TuraOverride[] = [];
+      const expiraFix = fmtDateInput(endScan);
+
+      for (let d = new Date(startScan); d <= endScan; d = new Date(d.getTime() + 86400000)) {
+        const dStr = fmtDateInput(d);
+
+        // Verificam acoperirea cu toate override-urile (existente + noi)
+        const toateOverride = [...turaOverride.filter(o => !o.id.startsWith('criza_')), ...noileOverride, ...fixuriExtra];
+        const echipaNormala = echipa.filter(m => m.id !== 999);
+        const ture = echipaNormala.map(m => getTura(d, m, echipa, false, [], toateOverride, oreAcumulate).type);
+        const nD = ture.filter(t => t === 'D').length;
+        const nS = ture.filter(t => t === 'S').length;
+
+        // Daca ziua e acoperita de suplinitor, sarim
+        const areSuplinitor = toateOverride.some(o =>
+          o.angajatId === 999 && o.data === dStr && parseD(o.expiraLa) > d
+        );
+        if (areSuplinitor) continue;
+
+        // Daca acoperire OK, sarim
+        if (nD >= 2 && nS >= 1) continue;
+
+        // Gasim activi in ziua respectiva
+        const activiZi = echipaNormala.filter(m => !inCO(d, m) && !inAbsenta(d, m, 'any'));
+        if (activiZi.length < 3) continue; // nu putem face nimic cu < 3 oameni
+
+        // Construim turele curente per angajat
+        const tureMap: Record<number, string> = {};
+        echipaNormala.forEach(m => {
+          tureMap[m.id] = getTura(d, m, echipa, false, [], toateOverride, oreAcumulate).type;
+        });
+
+        // FIX S: daca lipseste S, schimbam un D in S
+        if (nS < 1 && nD >= 3) {
+          const candidatS = activiZi
+            .filter(m => tureMap[m.id] === 'D')
+            .sort((a,b) => (oreAcumulate[a.id]||0) - (oreAcumulate[b.id]||0))[0];
+          if (candidatS) {
+            fixuriExtra.push({
+              id: `criza_fix_S_${candidatS.id}_${dStr}`,
+              angajatId: candidatS.id,
+              data: dStr,
+              tura: 'S',
+              expiraLa: expiraFix,
+            });
+            continue;
+          }
+        }
+
+        // FIX D: daca lipsesc D-uri, schimbam L in D
+        if (nD < 2) {
+          const liberi = activiZi
+            .filter(m => tureMap[m.id] === 'L')
+            .sort((a,b) => (oreAcumulate[a.id]||0) - (oreAcumulate[b.id]||0));
+          for (const m of liberi.slice(0, 2 - nD)) {
+            fixuriExtra.push({
+              id: `criza_fix_D_${m.id}_${dStr}`,
+              angajatId: m.id,
+              data: dStr,
+              tura: 'D',
+              expiraLa: expiraFix,
+            });
+          }
+        }
+      }
+
+      if (fixuriExtra.length > 0) {
+        setTuraOverride(prev => [...prev, ...fixuriExtra]);
+        addLog(`✓ Auto-corectat ${fixuriExtra.length} zile cu acoperire insuficienta post-criza`);
+      }
+    }
 
     const zileSup = planCriza.plan.filter(zi => zi.ziuaSef).map(zi => fmtDate(parseD(zi.data))).join(', ');
     addLog(`Plan Criză aplicat: ${noileOverride.length} override-uri până la ${expiraLa}. Suplinitori Duminica: ${zileSup}`);
