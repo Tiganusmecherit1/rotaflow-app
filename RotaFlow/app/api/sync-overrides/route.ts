@@ -10,17 +10,17 @@ export async function POST(req: Request) {
   try {
     const { ture, overrides, notificare } = await req.json()
 
-    // Salveaza turele calculate in ture_mirror
+    // Upsert ture_mirror — nu mai da eroare la duplicate
     if (ture && ture.length > 0) {
-      const dates = [...new Set(ture.map((t: any) => t.data))] as string[]
-      await sb.from('ture_mirror').delete().in('data', dates)
-      const { error } = await sb.from('ture_mirror').insert(ture)
+      const { error } = await sb.from('ture_mirror')
+        .upsert(ture, { onConflict: 'angajat_id,data' })
       if (error) throw error
     }
 
     // Salveaza override-urile manuale permanent
     if (overrides && overrides.length > 0) {
-      const { error } = await sb.from('overrides').upsert(overrides, { onConflict: 'id' })
+      const { error } = await sb.from('overrides')
+        .upsert(overrides, { onConflict: 'id' })
       if (error) throw error
     }
 
