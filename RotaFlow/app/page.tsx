@@ -911,7 +911,6 @@ export default function RotaFlow() {
       const activiAzi = echipa.filter(m => !inCO(d, m) && !inAbsenta(d, m, 'any'));
       const n = activiAzi.length;
       if (n === 0) continue;
-      // Sortam dupa ore acumulate — identic cu getTuraBaza pentru consistenta
       const activiSortati = n >= 4
         ? [...activiAzi].sort((a,b) => (ore[a.id]||0) - (ore[b.id]||0))
         : activiAzi;
@@ -921,6 +920,38 @@ export default function RotaFlow() {
         if (sec <= 2) ore[m.id] = (ore[m.id]||0) + 8;
       });
     }
+
+    // Compensare graduala post-criza pe 30 de zile
+    // Detectam sfarsitul ultimei perioade de criza (cand echipa revine la 4+ activi)
+    const ZILE_COMP = 30;
+    let sfarsitCriza: Date | null = null;
+    for (let d = new Date(perioadaStart); d <= perioadaEnd; d = new Date(d.getTime()+86400000)) {
+      const activiAzi = echipa.filter(m => !inCO(d, m) && !inAbsenta(d, m, 'any'));
+      const activiIeri = echipa.filter(m => !inCO(new Date(d.getTime()-86400000), m) && !inAbsenta(new Date(d.getTime()-86400000), m, 'any'));
+      // Tranzitie: ieri < 4 activi, azi >= 4 activi → sfarsit criza
+      if (activiIeri.length < 4 && activiAzi.length >= 4) {
+        sfarsitCriza = new Date(d);
+      }
+    }
+
+    if (sfarsitCriza) {
+      const ziuaAzi = perioadaEnd;
+      const zileTrecute = Math.floor((ziuaAzi.getTime() - sfarsitCriza.getTime()) / 86400000);
+
+      if (zileTrecute < ZILE_COMP) {
+        // Suntem in fereastra de compensare
+        const factor = 1 - zileTrecute / ZILE_COMP; // 1.0 → 0.0
+        const media = Object.values(ore).reduce((s,v) => s+v, 0) / echipa.length;
+        const oreAjustate: Record<number, number> = {};
+        echipa.forEach(m => {
+          const datorie = Math.max(0, media - ore[m.id]);
+          // Adaugam artificial ore celor cu datorie, proportional cu factorul
+          oreAjustate[m.id] = ore[m.id] + datorie * factor;
+        });
+        return oreAjustate;
+      }
+    }
+
     return ore;
   }, [echipa, weekStart]);
 
