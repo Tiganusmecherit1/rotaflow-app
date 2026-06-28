@@ -629,6 +629,9 @@ export default function RotaFlow() {
   const [showVerificare, setShowVerificare] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncOk, setSyncOk] = useState(false);
+  const [saveStep, setSaveStep] = useState<0|1>(0); // 0=normal, 1=confirmare
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [saveOk, setSaveOk] = useState(false);
   const [rezultateVerificare, setRezultateVerificare] = useState<{tip:'ok'|'warn'|'err'; mesaj: string}[]>([]);
 
   const verificaSaptamana = () => {
@@ -962,7 +965,46 @@ export default function RotaFlow() {
     setSyncLoading(false);
   }, [echipa, suplinitorFinal, swapuri, turaOverride, oreAcumulate, weekStart, addLog]);
 
-  // Alerte ore maxime (Art. 114 — max 48h/saptamana)
+  const salveazaModificari = useCallback(async () => {
+    setSaveLoading(true); setSaveOk(false); setSaveStep(0);
+    try {
+      const azi = new Date().toISOString().split('T')[0];
+      // Luam doar override-urile manuale (drag_) care nu au expirat
+      const overrideManuale = turaOverride
+        .filter(o => o.id.startsWith('drag_') && o.expiraLa >= azi)
+        .map(o => ({
+          id: o.id,
+          angajat_id: o.angajatId,
+          data: o.data,
+          tura: o.tura,
+          // Expira peste 1 an — nu se mai pierd dupa 7 zile
+          expira_la: new Date(new Date(o.data).getTime() + 365*86400000).toISOString().split('T')[0],
+          tip: 'manual',
+        }));
+
+      const res = await fetch('/api/sync-overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ overrides: overrideManuale }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Eroare server');
+
+      // Actualizam si expiraLa local ca sa nu expire dupa 7 zile
+      setTuraOverride(prev => prev.map(o =>
+        o.id.startsWith('drag_')
+          ? { ...o, expiraLa: new Date(new Date(o.data).getTime() + 365*86400000).toISOString().split('T')[0] }
+          : o
+      ));
+
+      addLog(`✓ Modificari salvate — ${overrideManuale.length} ture salvate permanent`);
+      setSaveOk(true);
+      setTimeout(() => setSaveOk(false), 4000);
+    } catch(e: any) {
+      addLog(`✗ Eroare salvare: ${e?.message || 'necunoscuta'}`);
+    }
+    setSaveLoading(false);
+  }, [turaOverride, addLog]);
   const alerteOre = useMemo(() => {
     return echipa.filter(m => calcOreSaptamana(m, weekStart, echipa, suplinitorFinal, swapuri, turaOverride, oreAcumulate) > 48).map(m => m.nume);
   }, [echipa, weekStart, suplinitorFinal, swapuri]);
@@ -2409,6 +2451,34 @@ export default function RotaFlow() {
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-900/40 border border-emerald-500/30 text-emerald-300 text-[12px] font-semibold hover:bg-emerald-800/50 transition-all">
                     <Check size={13}/> Verifică
                   </button>
+                  {/* Buton Salvează — 2 pași */}
+                  {saveStep === 0 ? (
+                    <button
+                      onClick={() => { if (turaOverride.filter(o=>o.id.startsWith('drag_')).length > 0) setSaveStep(1); else addLog('Nu există modificări manuale de salvat.'); }}
+                      disabled={saveLoading}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/40 border border-amber-500/30 text-amber-300 text-[12px] font-semibold hover:bg-amber-800/50 transition-all disabled:opacity-50">
+                      <FileText size={13}/> Salvează modificările
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-amber-400 font-semibold">Ești sigur?</span>
+                      <button
+                        onClick={salveazaModificari}
+                        disabled={saveLoading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 border border-amber-500 text-white text-[12px] font-bold hover:bg-amber-500 transition-all disabled:opacity-50">
+                        {saveLoading
+                          ? <><span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin inline-block"/> Se salvează...</>
+                          : saveOk
+                            ? <><Check size={13}/> Salvat!</>
+                            : <><Check size={13}/> Da, salvează</>
+                        }
+                      </button>
+                      <button onClick={() => setSaveStep(0)}
+                        className="px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-400 text-[12px] hover:bg-zinc-700 transition-all">
+                        <X size={13}/>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
               {dragError && (
