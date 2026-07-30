@@ -32,3 +32,23 @@ export async function GET() {
     return NextResponse.json({ error: 'Nu am putut incarca datele' }, { status: 500 });
   }
 }
+
+export async function PATCH(request: Request) {
+  try {
+    const { table, id, data } = await request.json();
+    
+    // Validare minima
+    const tabelePermise = ['angajati'];
+    if (!tabelePermise.includes(table)) {
+      return NextResponse.json({ error: 'Tabel nepermis' }, { status: 400 });
+    }
+
+    const { error } = await supabaseAdmin.from(table).update(data).eq('id', id);
+    if (error) throw error;
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Eroare PATCH:', error);
+    return NextResponse.json({ error: 'Eroare la actualizare' }, { status: 500 });
+  }
+}
