@@ -695,6 +695,14 @@ export default function RotaFlow() {
   const [showCO, setShowCO] = useState(false);
   const [showUrgente, setShowUrgente] = useState(false);
   const [showConfigEchipa, setShowConfigEchipa] = useState(false);
+  // Popup absenta rapida CTA
+  const [absentaPopup, setAbsentaPopup] = useState<{
+    angajat: Angajat;
+    tip: 'CO'|'CM'|'AN'|null;
+    dataStart: string;
+    dataSfarsit: string;
+    runnerId: number|null;
+  } | null>(null);
   // Runner asignat per concediu CTA: cheie = "angajatId_dataStart"
   const [runnerAsignat, setRunnerAsignat] = useState<Record<string, number|null>>({});
   // Stocheaza: runnerId → { dataStart, perioadaStart, perioadaSfarsit }
@@ -1325,6 +1333,44 @@ export default function RotaFlow() {
       incarcaTotul(); // re-sincronizam daca a esuat scrierea
     });
   }, [setEchipa, addLog, echipa, incarcaTotul]);
+
+  // ─── Aplica absenta CTA + runner automat ───
+  const aplicaAbsentaCTA = useCallback(async (
+    angajat: Angajat,
+    tip: 'CO'|'CM'|'AN',
+    dataStart: string,
+    dataSfarsit: string,
+    runnerId: number|null
+  ) => {
+    const pi = echipa.findIndex(m => m.id === angajat.id);
+    if (pi === -1) return;
+
+    if (tip === 'CO') {
+      const numeSlot = `${fmtDate(parseD(dataStart))}–${fmtDate(parseD(dataSfarsit))}`;
+      adaugaConcediu(pi, { n: numeSlot, s: dataStart, e: dataSfarsit });
+    } else {
+      const zile = Math.ceil((parseD(dataSfarsit).getTime() - parseD(dataStart).getTime()) / 86400000) + 1;
+      setEchipa(prev => prev.map((m, i) => i !== pi ? m : {
+        ...m, absente: [...m.absente, { startDate: dataStart, zile, tip, uuid: `local_${Date.now()}` }]
+      }));
+      addLog(`${tip} adaugat: ${angajat.nume} 2014 ${dataStart} (${zile} zile)`);
+      if (angajat.uuid) apiAdaugaAbsenta(angajat.uuid, tip === 'CM' ? 'CM' : 'AN', dataStart, zile).catch(console.error);
+    }
+
+    if (runnerId !== null) {
+      const ra = echipa.find(m => m.id === runnerId);
+      if (ra && angajat.dataStartCiclu) {
+        const sf = new Date(dataSfarsit + 'T00:00:00');
+        let sfE = new Date(sf);
+        const dow = sf.getDay();
+        if (dow === 5) sfE = new Date(sf.getTime() + 2*86400000);
+        else if (dow >= 1 && dow <= 4) sfE = new Date(sf.getTime() + (6-dow)*86400000);
+        setRunnerCicluOverride(prev => ({...prev, [runnerId]: {dataStartCiclu: angajat.dataStartCiclu!, perioadaStart: dataStart, perioadaSfarsit: fmtDateInput(sfE)}}));
+        addLog(`Runner ${ra.nume} -> acopera ${angajat.nume} (${dataStart}–${fmtDateInput(sfE)})`);
+      }
+    }
+    setAbsentaPopup(null);
+  }, [echipa, adaugaConcediu, addLog, setEchipa, setRunnerCicluOverride]);
 
   const stergeConcediu = useCallback((pi: number, ci: number) => {
     const angajatTarget = echipa[pi];
@@ -2724,8 +2770,38 @@ export default function RotaFlow() {
                                 {m.nume.substring(0,2).toUpperCase()}
                               </div>
                               <div>
-                                <span className="font-semibold text-[14px] whitespace-nowrap text-zinc-100">{m.nume}</span>
+                                <span
+                                  className={`font-semibold text-[14px] whitespace-nowrap text-zinc-100 ${isCTA(m) && m.tip!=='runner' ? 'cursor-pointer hover:text-blue-400 transition-colors' : ''}`}
+                                  onClick={() => {
+                                    if (!isCTA(m) || m.tip==='runner') return;
+                                    const azi = new Date();
+                                    const dataStart = fmtDateInput(azi);
+                                    // Gasim runnerul sugerat
+                                    const runneri = toataEchipaCTA.filter(r => r.tip==='runner');
+                                    const disponibili = runneri.filter(r => !runnerCicluOverride[r.id]);
+                                    const sugerat = disponibili.sort((a,b) => (oreAcumulate[a.id]||0)-(oreAcumulate[b.id]||0))[0] ?? null;
+                                    setAbsentaPopup({
+                                      angajat: m,
+                                      tip: null,
+                                      dataStart,
+                                      dataSfarsit: dataStart,
+                                      runnerId: sugerat?.id ?? null,
+                                    });
+                                  }}
+                                  title={isCTA(m) && m.tip!=='runner' ? 'Click pentru absență rapidă' : ''}
+                                >{m.nume}</span>
                                 {oreS>0&&<span className={`ml-2 text-[10px] ${oreS>48?'text-red-400 font-bold':'text-zinc-600'}`}>{oreS}h</span>}
+                                {isCTA(m) && m.tip!=='runner' && (
+                                  <span className="ml-1 text-[9px] text-zinc-700 cursor-pointer hover:text-blue-400"
+                                    onClick={() => {
+                                      const azi = new Date();
+                                      const dataStart = fmtDateInput(azi);
+                                      const runneri = toataEchipaCTA.filter(r => r.tip==='runner');
+                                      const disponibili = runneri.filter(r => !runnerCicluOverride[r.id]);
+                                      const sugerat = disponibili.sort((a,b) => (oreAcumulate[a.id]||0)-(oreAcumulate[b.id]||0))[0] ?? null;
+                                      setAbsentaPopup({ angajat: m, tip: null, dataStart, dataSfarsit: dataStart, runnerId: sugerat?.id ?? null });
+                                    }}>＋</span>
+                                )}
                               </div>
                             </div>
                           </td>
@@ -3792,6 +3868,140 @@ export default function RotaFlow() {
               </div>
               <div className="px-5 py-4 border-t border-white/[0.08]">
                 <p className="text-[10px] text-zinc-600 text-center">Modificările se salvează automat în baza de date</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Popup Absenta Rapida CTA ── */}
+        {absentaPopup && (
+          <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 no-print"
+            onClick={e => { if (e.target === e.currentTarget) setAbsentaPopup(null); }}>
+            <div className="bg-[#2c2c2e] border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
+              {/* Header */}
+              <div className="px-5 py-4 border-b border-white/[0.08]" style={{background:'linear-gradient(135deg,#0a1628,#1a2744)'}}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-[13px] font-black"
+                      style={{background:AVATAR_COLORS[displayEchipa.findIndex(m=>m.id===absentaPopup.angajat.id)%5]+'33',
+                              color:AVATAR_COLORS[displayEchipa.findIndex(m=>m.id===absentaPopup.angajat.id)%5],
+                              border:`1.5px solid ${AVATAR_COLORS[displayEchipa.findIndex(m=>m.id===absentaPopup.angajat.id)%5]}55`}}>
+                      {absentaPopup.angajat.nume.substring(0,2).toUpperCase()}
+                    </div>
+                    <div>
+                      <div className="font-bold text-[15px] text-white">{absentaPopup.angajat.nume}</div>
+                      <div className="text-[11px] text-zinc-500">Adaugă absență rapidă</div>
+                    </div>
+                  </div>
+                  <button onClick={()=>setAbsentaPopup(null)} className="w-7 h-7 rounded-lg bg-white/[0.06] text-zinc-400 hover:text-white flex items-center justify-center text-[16px]">×</button>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-4">
+                {/* Tip absenta */}
+                <div>
+                  <div className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mb-2">Tip absență</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      ['CO', '🏖', 'Concediu\nodihna', 'bg-rose-950/40 border-rose-500/40 text-rose-300'],
+                      ['CM', '🏥', 'Concediu\nmedical', 'bg-orange-950/40 border-orange-500/40 text-orange-300'],
+                      ['AN', '⛔', 'Absent\nnemotvat', 'bg-red-950/40 border-red-500/40 text-red-300'],
+                    ] as const).map(([t, emoji, label, cls]) => (
+                      <button key={t} onClick={()=>setAbsentaPopup(p=>p?{...p,tip:t}:p)}
+                        className={`flex flex-col items-center gap-1 py-3 rounded-xl border text-[11px] font-semibold transition-all ${
+                          absentaPopup.tip===t ? cls + ' ring-2 ring-white/20' : 'bg-white/[0.03] border-white/[0.08] text-zinc-500 hover:text-zinc-300'
+                        }`}>
+                        <span className="text-[18px]">{emoji}</span>
+                        <span className="text-center leading-tight whitespace-pre-line">{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Perioada */}
+                <div>
+                  <div className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mb-2">Perioadă</div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <div className="text-[10px] text-zinc-600 mb-1">De la</div>
+                      <input type="date" value={absentaPopup.dataStart}
+                        onChange={e=>setAbsentaPopup(p=>p?{...p,dataStart:e.target.value}:p)}
+                        className="w-full bg-[#1c1c1e] border border-white/10 rounded-lg px-3 py-2 text-[12px] text-zinc-200 outline-none focus:border-blue-500/50"/>
+                    </div>
+                    <div className="text-zinc-600 mt-4">→</div>
+                    <div className="flex-1">
+                      <div className="text-[10px] text-zinc-600 mb-1">Până la</div>
+                      <input type="date" value={absentaPopup.dataSfarsit}
+                        onChange={e=>setAbsentaPopup(p=>p?{...p,dataSfarsit:e.target.value}:p)}
+                        className="w-full bg-[#1c1c1e] border border-white/10 rounded-lg px-3 py-2 text-[12px] text-zinc-200 outline-none focus:border-blue-500/50"/>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Runner */}
+                <div>
+                  <div className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mb-2">
+                    Runner acoperire
+                    {(() => {
+                      const runneri = toataEchipaCTA.filter(r=>r.tip==='runner');
+                      const ocupati = runneri.filter(r=>runnerCicluOverride[r.id]);
+                      if (ocupati.length === runneri.length && runneri.length > 0) {
+                        return <span className="ml-2 text-red-400 text-[10px] font-normal">⚠ Toți runnerii sunt ocupați!</span>;
+                      }
+                      return null;
+                    })()}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button onClick={()=>setAbsentaPopup(p=>p?{...p,runnerId:null}:p)}
+                      className={`py-2.5 rounded-xl border text-[11px] font-semibold transition-all ${
+                        absentaPopup.runnerId===null ? 'bg-zinc-700/50 border-zinc-500/50 text-zinc-300 ring-2 ring-white/10' : 'bg-white/[0.03] border-white/[0.08] text-zinc-600'
+                      }`}>Fără runner</button>
+                    {toataEchipaCTA.filter(r=>r.tip==='runner').map(r => {
+                      const ocupat = !!runnerCicluOverride[r.id];
+                      return (
+                        <button key={r.id} onClick={()=>!ocupat && setAbsentaPopup(p=>p?{...p,runnerId:r.id}:p)}
+                          disabled={ocupat}
+                          className={`py-2.5 rounded-xl border text-[11px] font-semibold transition-all relative ${
+                            absentaPopup.runnerId===r.id ? 'bg-amber-950/50 border-amber-500/40 text-amber-300 ring-2 ring-amber-500/20' :
+                            ocupat ? 'bg-white/[0.02] border-white/[0.04] text-zinc-700 cursor-not-allowed' :
+                            'bg-white/[0.03] border-white/[0.08] text-zinc-400 hover:text-zinc-200'
+                          }`}>
+                          {r.nume.split(' ')[0]}
+                          {ocupat && <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 flex items-center justify-center text-[7px] text-white font-black">✗</span>}
+                          {absentaPopup.runnerId===r.id && <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-amber-500 flex items-center justify-center text-[7px] text-white font-black">★</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {absentaPopup.runnerId !== null && (
+                    <div className="mt-2 text-[10px] text-amber-400/80">
+                      ★ Runner sugerat automat — cel cu mai puține ore acumulate
+                    </div>
+                  )}
+                </div>
+
+                {/* Butoane */}
+                <div className="flex gap-3 pt-1">
+                  <button onClick={()=>setAbsentaPopup(null)}
+                    className="flex-1 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-zinc-400 text-[13px] font-semibold hover:bg-white/[0.08] transition-all">
+                    Anulează
+                  </button>
+                  <button
+                    disabled={!absentaPopup.tip || !absentaPopup.dataStart || !absentaPopup.dataSfarsit}
+                    onClick={()=>{
+                      if (!absentaPopup.tip) return;
+                      aplicaAbsentaCTA(
+                        absentaPopup.angajat,
+                        absentaPopup.tip,
+                        absentaPopup.dataStart,
+                        absentaPopup.dataSfarsit,
+                        absentaPopup.runnerId
+                      );
+                    }}
+                    className="flex-2 px-6 py-2.5 rounded-xl bg-blue-600 text-white text-[13px] font-bold hover:bg-blue-500 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                    ✓ Aplică
+                  </button>
+                </div>
               </div>
             </div>
           </div>
