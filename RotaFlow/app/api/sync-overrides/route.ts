@@ -40,14 +40,17 @@ export async function POST(req: Request) {
     if (notificare) {
       const acum = new Date()
       const dataOra = `${String(acum.getDate()).padStart(2,'0')}/${String(acum.getMonth()+1).padStart(2,'0')}/${acum.getFullYear()} ${String(acum.getHours()).padStart(2,'0')}:${String(acum.getMinutes()).padStart(2,'0')}`
-      const { data: angajati } = await sb.from('angajati').select('id').eq('este_sef', false)
+      // IMPORTANT: destinatar_id trebuie sa fie auth_user_id (cel cu care userul se autentifica),
+      // NU id (PK-ul propriu al randului din angajati) — altfel notificarea nu se potriveste
+      // niciodata cu niciun user logat si dispare in gol.
+      const { data: angajati } = await sb.from('angajati').select('auth_user_id').eq('este_sef', false).not('auth_user_id', 'is', null)
       if (angajati && angajati.length > 0) {
         await sb.from('notificari').insert(angajati.map((a: any) => ({
           titlu: 'Bază de date sincronizată',
           descriere: dataOra,
           tip: 'co_adaugat',
           citita: false,
-          destinatar_id: a.id,
+          destinatar_id: a.auth_user_id,
         })))
       }
     }

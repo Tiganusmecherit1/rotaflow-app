@@ -1088,7 +1088,7 @@ export default function RotaFlow() {
       // Calculam zilele pana la 31 Martie anul viitor (garantat acopera tot anul curent)
       const sfarsitPerioadei = new Date(azi.getFullYear() + 1, 2, 31);
       const zileTotale = Math.ceil((sfarsitPerioadei.getTime() - azi.getTime()) / 86400000) + 7;
-      const tureCalculate: Array<{angajat_id: number; data: string; tura: string}> = [];
+      const tureCalculate: Array<{angajat_id: number; data: string; tura: string; locatie_id: number}> = [];
       for (let i = -7; i < zileTotale; i++) {
         const d = new Date(azi.getTime() + i * 86400000);
         const dStr = fmtDateInput(d);
@@ -1096,7 +1096,7 @@ export default function RotaFlow() {
           const t = getTuraW(d, m);
           // Normalizam tipul pentru ture_mirror
           const turaNormalizata = t.type === 'R' ? 'Z' : t.type === 'B' ? 'L' : t.type;
-          tureCalculate.push({ angajat_id: m.id, data: dStr, tura: turaNormalizata });
+          tureCalculate.push({ angajat_id: m.id, data: dStr, tura: turaNormalizata, locatie_id: m.locatieId ?? 1 });
         });
       }
       addLog(`Trimit ${tureCalculate.length} ture în baza de date...`);
@@ -1129,15 +1129,19 @@ export default function RotaFlow() {
       // Luam doar override-urile manuale (drag_) care nu au expirat
       const overrideManuale = turaOverride
         .filter(o => o.id.startsWith('drag_') && o.expiraLa >= azi)
-        .map(o => ({
-          id: o.id,
-          angajat_id: o.angajatId,
-          data: o.data,
-          tura: o.tura,
-          // Expira peste 1 an — nu se mai pierd dupa 7 zile
-          expira_la: new Date(new Date(o.data).getTime() + 365*86400000).toISOString().split('T')[0],
-          tip: 'manual',
-        }));
+        .map(o => {
+          const angajatOv = echipa.find(m => m.id === o.angajatId);
+          return {
+            id: o.id,
+            angajat_id: o.angajatId,
+            data: o.data,
+            tura: o.tura,
+            // Expira peste 1 an — nu se mai pierd dupa 7 zile
+            expira_la: new Date(new Date(o.data).getTime() + 365*86400000).toISOString().split('T')[0],
+            tip: 'manual',
+            locatie_id: angajatOv?.locatieId ?? 1,
+          };
+        });
 
       const res = await fetch('/api/sync-overrides', {
         method: 'POST',
@@ -1161,7 +1165,7 @@ export default function RotaFlow() {
       addLog(`✗ Eroare salvare: ${e?.message || 'necunoscuta'}`);
     }
     setSaveLoading(false);
-  }, [turaOverride, addLog]);
+  }, [turaOverride, echipa, addLog]);
   const alerteOre = useMemo(() => {
     const echipaLocatie = echipa.filter(m => locatieActiva==='PLO' ? (m.locatieId??1)===1 : (m.locatieId??1)===2);
     return echipaLocatie.filter(m => calcOreSaptamana(m, weekStart, echipa, suplinitorFinal, swapuri, turaOverride, oreAcumulate, runneriActivi, runnerCicluOverride) > 48).map(m => m.nume);
