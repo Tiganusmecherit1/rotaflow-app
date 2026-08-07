@@ -1,9 +1,8 @@
 // RotaFlow v6.0 — Multi-locatie: selector PLO/CTA, algoritm 12h CTA, verificare 1Z+1N, N→Z blocat
 'use client';
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
-import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText, Cloud, LogOut } from 'lucide-react';
+import { Edit3, ChevronLeft, ChevronRight, FileDown, Calendar, X, AlertTriangle, HeartPulse, ArrowLeftRight, Trophy, ExternalLink, Clock, Printer, FlaskConical, Plus, Check, Scale, FileText, Cloud } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -25,7 +24,7 @@ const LS_KEY = 'rotaflow_v1';
 interface Concediu { n: string; s: string; e: string; uuid?: string }
 interface Absenta { startDate: string; zile: number; tip: 'CM' | 'AN'; uuid?: string }
 interface Swap { id: string; aId: number; aData: string; bId: number; bData: string; nota: string }
-interface TuraOverride { id: string; angajatId: number; data: string; tura: string; expiraLa: string } // expiraLa = data plecarii suplinitorului. tura poate fi si text liber (ex. deplasare)
+interface TuraOverride { id: string; angajatId: number; data: string; tura: 'D'|'S'|'L'|'Z'|'N'; expiraLa: string } // expiraLa = data plecarii suplinitorului
 interface Angajat { id: number; uuid?: string; nume: string; zileCO: number; concedii: Concediu[]; absente: Absenta[]; locatieId?: number; tip?: string; dataStartCiclu?: string | null }
 interface LogEntry { ts: string; msg: string }
 interface SimConcediu { id: string; angajatId: number; start: string; zile: number }
@@ -491,14 +490,7 @@ function getTuraRawInner(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitor
   const overrideManual = turaOverride.find(o =>
     o.id.startsWith('drag_') && o.angajatId === m.id && o.data === dStr && parseD(o.expiraLa) > d
   );
-  if (overrideManual) {
-    // Deplasare (text custom, ex. "Craiova") — conteaza tot ca Birou la ore/logica,
-    // doar afisarea foloseste textul scris de sef.
-    if (overrideManual.id.startsWith('drag_deplasare_')) {
-      return { type: 'B', label: overrideManual.tura, swapped: false };
-    }
-    return { type: overrideManual.tura, label: overrideManual.tura, swapped: false };
-  }
+  if (overrideManual) return { type: overrideManual.tura, label: overrideManual.tura, swapped: false };
 
   // Override de criza — acum doar Duminici (criza_SUP_ pentru vizitator, criza_{id}_ pentru localii puși pe liber)
   const override = turaOverride.find(o =>
@@ -553,8 +545,7 @@ function calcOreSaptamana(m: Angajat, weekStart: Date, echipa: Angajat[], suplin
     if (isCTA(m) && m.tip==='runner') {
       const ov = turaOverride?.find(o=>(o.id.startsWith('drag_')||o.id.startsWith('criza_'))&&o.angajatId===m.id&&o.data===dStr);
       if (ov) {
-        if (ov.id.startsWith('drag_deplasare_')) ore += 8; // Deplasare (text custom) = tot 8h, ca Birou
-        else if (ov.tura === 'R') ore += 8;           // Runner activ = 8h
+        if (ov.tura === 'R') ore += 8;           // Runner activ = 8h
         else if (ov.tura === 'Z' || ov.tura === 'N') ore += 12; // Tura CTA 12h
         else if (ov.tura === 'D' || ov.tura === 'S') ore += 8;  // Acoperire PLO in criza = 8h
         // L = 0h
@@ -898,13 +889,6 @@ function MiniDatePicker({ value, onChange }: { value: string; onChange: (v: stri
 }
 
 export default function RotaFlow() {
-  const router = useRouter();
-  const logout = useCallback(async () => {
-    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
-    router.replace('/login');
-    router.refresh();
-  }, [router]);
-
   // ─── State — initial gol, populat din Supabase la montare ───
   const [echipa, setEchipaRaw] = useState<Angajat[]>([]);
   const [swapuri, setSwapuriRaw] = useState<Swap[]>([]);
@@ -927,8 +911,6 @@ export default function RotaFlow() {
   const [runnerPerioadaEnd, setRunnerPerioadaEnd] = useState<Record<number,string>>({});
   const [showCO, setShowCO] = useState(false);
   const [showMatrice, setShowMatrice] = useState(false);
-  const [cautareMatrice, setCautareMatrice] = useState('');
-  const [cautareCO, setCautareCO] = useState('');
   const [showUrgente, setShowUrgente] = useState(false);
   const [showConfigEchipa, setShowConfigEchipa] = useState(false);
   // Popup absenta rapida CTA
@@ -940,8 +922,6 @@ export default function RotaFlow() {
     saptamani: 1|2;
     runnerId: number|null;
   } | null>(null);
-  // Popup deplasare runner — text liber, per zi, doar pentru saptamana afisata
-  const [deplasarePopup, setDeplasarePopup] = useState<{ angajat: Angajat; texte: Record<string,string> } | null>(null);
   // Runner asignat per concediu CTA: cheie = "angajatId_dataStart"
   const [runnerAsignat, setRunnerAsignat] = useState<Record<string, number|null>>({});
   // Stocheaza: runnerId → { dataStart, perioadaStart, perioadaSfarsit }
@@ -952,7 +932,6 @@ export default function RotaFlow() {
   const [showVerificare, setShowVerificare] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncOk, setSyncOk] = useState(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
   const [saveStep, setSaveStep] = useState<0|1>(0); // 0=normal, 1=confirmare
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveOk, setSaveOk] = useState(false);
@@ -1330,7 +1309,7 @@ export default function RotaFlow() {
 
   // getTuraW foloseste echipa filtrata per locatie pentru calcul rotatie corect
   const sincronizeazaDB = useCallback(async () => {
-    setSyncLoading(true); setSyncOk(false); setSyncError(null);
+    setSyncLoading(true); setSyncOk(false);
     try {
       const azi = new Date(); azi.setHours(0,0,0,0);
       // Calculam zilele pana la 31 Martie anul viitor (garantat acopera tot anul curent)
@@ -1358,18 +1337,14 @@ export default function RotaFlow() {
       });
       const json = await res.json();
       if (!res.ok) {
-        const mesajEroare = `Eroare la sincronizare: ${json.error || res.status}`;
-        addLog(`✗ ${mesajEroare}`);
-        setSyncError(mesajEroare);
+        addLog(`✗ Eroare API: ${json.error || res.status}`);
         setSyncLoading(false); return;
       }
-      addLog(`✓ Sincronizat — ${tureCalculate.length} ture pentru ${echipa.length} angajați, până la ${fmtDate(sfarsitPerioadei)}.`);
+      addLog(`✓ Sincronizat — ${tureCalculate.length} ture. Răspuns: ${JSON.stringify(json)}`);
       setSyncOk(true);
       setTimeout(() => setSyncOk(false), 3000);
     } catch(e: any) {
-      const mesajEroare = `Sincronizarea a eșuat: ${e?.message || 'verifică conexiunea la internet'}`;
-      addLog(`✗ ${mesajEroare}`);
-      setSyncError(mesajEroare);
+      addLog(`✗ Eroare sincronizare: ${e?.message || String(e)}`);
     }
     setSyncLoading(false);
   }, [echipa, suplinitorFinal, swapuri, turaOverride, oreAcumulate, weekStart, addLog]);
@@ -1549,10 +1524,7 @@ export default function RotaFlow() {
       const ovCriza = turaOverride.find(o=>o.id.startsWith('criza_')&&o.angajatId===m.id&&o.data===dStr&&parseD(o.expiraLa)>d);
       if (ovCriza) return { type:'PLO', label:`PLO (${ovCriza.tura})`, swapped:false };
       const ovManual = turaOverride.find(o=>o.id.startsWith('drag_')&&o.angajatId===m.id&&o.data===dStr);
-      if (ovManual) {
-        if (ovManual.id.startsWith('drag_deplasare_')) return { type:'B', label:ovManual.tura, swapped:false };
-        return { type:ovManual.tura, label:ovManual.tura, swapped:false };
-      }
+      if (ovManual) return { type:ovManual.tura, label:ovManual.tura, swapped:false };
       const isWE = d.getDay()===0||d.getDay()===6;
       if (isWE) return { type:'L', label:'L', swapped:false }; // Sa/Du = liber by default
       // Cand suplinitorul e activ la PLO, runnerii sunt natural rezerva disponibila —
@@ -1696,32 +1668,6 @@ export default function RotaFlow() {
   }, [setEchipa, addLog, echipa, incarcaTotul]);
 
   // ─── Aplica absenta CTA + runner automat ───
-  // Salveaza textele de deplasare pentru runner-ul din deplasarePopup — doar pe
-  // zilele unde omul e efectiv la Birou (sau are deja o deplasare acolo), ca sa
-  // nu suprascriem niciodata o tura reala Z/N.
-  const salveazaDeplasari = useCallback(() => {
-    if (!deplasarePopup) return;
-    const { angajat, texte } = deplasarePopup;
-    const noi: TuraOverride[] = [];
-    const deSters: string[] = [];
-    days.forEach(d => {
-      const dStr = fmtDateInput(d);
-      const text = (texte[dStr] || '').trim();
-      const idOv = `drag_deplasare_${angajat.id}_${dStr}`;
-      const areDejaOverride = turaOverride.some(o => o.id === idOv);
-      if (text) {
-        const tActuala = getTuraW(d, angajat);
-        if (tActuala.type !== 'B') return; // nu suprascriem o tura reala (Z/N/etc)
-        noi.push({ id: idOv, angajatId: angajat.id, data: dStr, tura: text, expiraLa: fmtDateInput(new Date(d.getTime() + 365 * 86400000)) });
-      } else if (areDejaOverride) {
-        deSters.push(idOv);
-      }
-    });
-    setTuraOverride(prev => [...prev.filter(o => !deSters.includes(o.id) && !noi.some(n => n.id === o.id)), ...noi]);
-    addLog(`Deplasări actualizate: ${angajat.nume}`);
-    setDeplasarePopup(null);
-  }, [deplasarePopup, days, turaOverride, getTuraW, addLog]);
-
   const aplicaAbsentaCTA = useCallback(async (
     angajat: Angajat,
     tip: 'CO'|'CM'|'AN',
@@ -1764,7 +1710,6 @@ export default function RotaFlow() {
     const angajatTarget = echipa[pi];
     const c = angajatTarget?.concedii[ci];
     if (!c) return;
-    if (!confirm(`Sigur vrei să ștergi concediul lui ${angajatTarget.nume} (${c.n})? Nu poate fi anulat.`)) return;
 
     // Recalculam zilele de restaurat ca si cum acest concediu nu ar mai exista in lista
     // (evita restaurarea unor zile care erau oricum acoperite de CM/AN/alt CO)
@@ -1818,7 +1763,6 @@ export default function RotaFlow() {
     const angajatTarget = echipa[pi];
     const a = angajatTarget?.absente[ai];
     if (!a) return;
-    if (!confirm(`Sigur vrei să ștergi ${a.tip}-ul lui ${angajatTarget.nume} din ${fmtDate(parseD(a.startDate))}? Nu poate fi anulat.`)) return;
 
     setEchipa(prev=>prev.map((m,i)=>i!==pi?m:{...m,absente:m.absente.filter((_,k)=>k!==ai)}));
     addLog(`${a.tip} șters: ${angajatTarget.nume}`);
@@ -1870,7 +1814,6 @@ export default function RotaFlow() {
   const stergeSwap = (id: string) => {
     const sw=swapuri.find(s=>s.id===id);
     const a=echipa.find(m=>m.id===sw?.aId), b=echipa.find(m=>m.id===sw?.bId);
-    if (!confirm(`Sigur vrei să ștergi schimbul de tură ${a?.nume} ↔ ${b?.nume}? Nu poate fi anulat.`)) return;
     setSwapuri(prev=>prev.filter(s=>s.id!==id));
     addLog(`Swap șters: ${a?.nume} ↔ ${b?.nume}`);
 
@@ -2542,23 +2485,14 @@ export default function RotaFlow() {
             </button>
             <button onClick={sincronizeazaDB} disabled={syncLoading}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] font-semibold transition-all disabled:opacity-50
-                ${syncError ? 'bg-red-900/50 border-red-500/40 text-red-300' : syncOk ? 'bg-green-900/50 border-green-500/40 text-green-300' : 'bg-blue-900/40 border-blue-500/30 text-blue-300 hover:bg-blue-800/50'}`}>
+                ${syncOk ? 'bg-green-900/50 border-green-500/40 text-green-300' : 'bg-blue-900/40 border-blue-500/30 text-blue-300 hover:bg-blue-800/50'}`}>
               {syncLoading
                 ? <><span className="w-3 h-3 border border-blue-400/30 border-t-blue-300 rounded-full animate-spin inline-block"/><span>Sincronizare...</span></>
-                : syncError
-                  ? <><AlertTriangle size={13}/> Eroare — reîncearcă</>
                 : syncOk
                   ? <><Check size={13}/> Sincronizat!</>
                   : <><Cloud size={13}/> Sincronizează DB</>
               }
             </button>
-            {syncError && (
-              <div className="w-full basis-full flex items-center gap-2 bg-red-950/40 border border-red-500/30 rounded-lg px-3 py-2 text-[11px] text-red-300">
-                <AlertTriangle size={12} className="flex-shrink-0"/>
-                <span className="flex-1">{syncError}</span>
-                <button onClick={()=>setSyncError(null)} className="text-red-400/70 hover:text-red-300">✕</button>
-              </div>
-            )}
             <button onClick={()=>setShowCO(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-900/40 border border-sky-500/30 text-sky-300 text-[12px] font-semibold hover:bg-sky-800/50 transition-all">
               <Calendar size={13}/> Concedii
             </button>
@@ -2602,9 +2536,6 @@ export default function RotaFlow() {
               setShowPlanCriza(true);
             }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 border border-red-500/30 text-red-300 text-[12px] font-semibold hover:bg-red-800/50 transition-all">
               <AlertTriangle size={13}/> Plan Criză
-            </button>
-            <button onClick={()=>{ if(confirm('Ieși din aplicație?')) logout(); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-400 text-[12px] font-semibold hover:bg-zinc-700 hover:text-zinc-200 transition-all ml-auto">
-              <LogOut size={13}/> Logout
             </button>
           </div>
         </div>
@@ -2881,7 +2812,7 @@ export default function RotaFlow() {
                       const oreS=calcOreSaptamana(m,weekStart,echipa,suplinitorFinal,swapuri,turaOverride,oreAcumulate,runneriActivi,runnerCicluOverride);
                       return (
                         <tr key={mi}>
-                          <td className="pl-3 pr-4 py-1.5 overflow-hidden">
+                          <td className="pl-3 pr-4 py-1.5">
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0"
                                 style={{background:AVATAR_COLORS[mi%5]+'22',color:AVATAR_COLORS[mi%5],border:`1.5px solid ${AVATAR_COLORS[mi%5]}55`}}>
@@ -2889,18 +2820,9 @@ export default function RotaFlow() {
                               </div>
                               <div>
                                 <span
-                                  className={`font-semibold text-[14px] leading-tight text-zinc-100 cursor-pointer hover:text-blue-400 transition-colors`}
+                                  className={`font-semibold text-[14px] whitespace-nowrap text-zinc-100 ${m.tip!=='runner' ? 'cursor-pointer hover:text-blue-400 transition-colors' : ''}`}
                                   onClick={() => {
-                                    if (m.tip==='runner') {
-                                      const texte: Record<string,string> = {};
-                                      days.forEach(d => {
-                                        const dStr = fmtDateInput(d);
-                                        const ov = turaOverride.find(o => o.id === `drag_deplasare_${m.id}_${dStr}`);
-                                        if (ov) texte[dStr] = ov.tura;
-                                      });
-                                      setDeplasarePopup({ angajat: m, texte });
-                                      return;
-                                    }
+                                    if (m.tip==='runner') return;
                                     const azi = new Date();
                                     const dataStart = fmtDateInput(azi);
                                     // Gasim runnerul sugerat (relevant doar pentru CTA — pentru PLO sectiunea e ascunsa)
@@ -2916,19 +2838,20 @@ export default function RotaFlow() {
                                       runnerId: sugerat?.id ?? null,
                                     });
                                   }}
-                                  title={m.tip==='runner' ? 'Click pentru deplasări' : 'Click pentru absență rapidă'}
+                                  title={m.tip!=='runner' ? 'Click pentru absență rapidă' : ''}
                                 >{m.nume}</span>
                                 {oreS>0&&<span className={`ml-2 text-[10px] ${oreS>48?'text-red-400 font-bold':'text-zinc-600'}`}>{oreS}h</span>}
-                                <span className="ml-1 text-[9px] text-zinc-700 cursor-pointer hover:text-blue-400"
-                                  title="Concediu / CM / AN"
-                                  onClick={() => {
-                                    const azi = new Date();
-                                    const dataStart = fmtDateInput(azi);
-                                    const runneri = toataEchipaCTA.filter(r => r.tip==='runner');
-                                    const disponibili = runneri.filter(r => !runnerCicluOverride[r.id]);
-                                    const sugerat = disponibili.sort((a,b) => (oreAcumulate[a.id]||0)-(oreAcumulate[b.id]||0))[0] ?? null;
-                                    setAbsentaPopup({ angajat: m, tip: null, dataStart, dataSfarsit: dataStart, saptamani: 1, runnerId: sugerat?.id ?? null });
-                                  }}>＋</span>
+                                {m.tip!=='runner' && (
+                                  <span className="ml-1 text-[9px] text-zinc-700 cursor-pointer hover:text-blue-400"
+                                    onClick={() => {
+                                      const azi = new Date();
+                                      const dataStart = fmtDateInput(azi);
+                                      const runneri = toataEchipaCTA.filter(r => r.tip==='runner');
+                                      const disponibili = runneri.filter(r => !runnerCicluOverride[r.id]);
+                                      const sugerat = disponibili.sort((a,b) => (oreAcumulate[a.id]||0)-(oreAcumulate[b.id]||0))[0] ?? null;
+                                      setAbsentaPopup({ angajat: m, tip: null, dataStart, dataSfarsit: dataStart, saptamani: 1, runnerId: sugerat?.id ?? null });
+                                    }}>＋</span>
+                                )}
                               </div>
                             </div>
                           </td>
@@ -2936,8 +2859,7 @@ export default function RotaFlow() {
                             const t=getTuraW(d,m);
                             const sarb=isSarbatoare(d);
                             const baseType=t.type.replace('↔','');
-                            const esteDeplasare = baseType==='B' && t.label!=='B';
-                            const style=esteDeplasare ? 'bg-purple-950/50 text-purple-300 border border-purple-500/30' : SHIFT_STYLE[baseType]??SHIFT_STYLE.L;
+                            const style=SHIFT_STYLE[baseType]??SHIFT_STYLE.L;
                             const dStr=fmtDateInput(d);
                             // CTA: Z e N sunt locked (non-editabile fara override manual)
                             // Pentru CTA: celulele Z/N sunt editabile (nu locked)
@@ -3073,12 +2995,6 @@ export default function RotaFlow() {
                                   {/* Continut celula */}
                                   {baseType==='R' ? (
                                     <span className="text-[11px] font-black text-orange-300">R</span>
-                                  ) : esteDeplasare ? (
-                                    <div className="flex flex-col items-center gap-0.5 w-full relative" title={t.label}>
-                                      <div className="absolute left-0 top-1 bottom-1 w-[3px] rounded-full bg-purple-500/60"/>
-                                      <span className="text-[11px]">🧭</span>
-                                      <span className="text-[8px] font-bold text-purple-300 tracking-tight uppercase truncate max-w-full px-0.5">{t.label}</span>
-                                    </div>
                                   ) : baseType==='B' ? (
                                     <div className="flex flex-col items-center gap-0.5 w-full relative">
                                       <div className="absolute left-0 top-1 bottom-1 w-[3px] rounded-full bg-teal-500/60"/>
@@ -3243,7 +3159,7 @@ export default function RotaFlow() {
                 <table className="w-full border-separate border-spacing-1 print-table table-fixed">
                   <thead>
                     <tr>
-                      <th className="text-left text-[11px] font-semibold text-zinc-500 uppercase pl-2 pb-1 w-40">Angajat</th>
+                      <th className="text-left text-[11px] font-semibold text-zinc-500 uppercase pl-2 pb-1 w-32">Angajat</th>
                       {zileLuna.map((d,i)=>(
                         <th key={i} className={`text-center text-[10px] font-semibold pb-1 w-9 ${isSarbatoare(d)?'text-amber-400':d.getDay()===0||d.getDay()===6?'text-zinc-500':'text-zinc-400'}`}>
                           {d.getDate()}<br/>
@@ -3255,7 +3171,7 @@ export default function RotaFlow() {
                   <tbody>
                     {displayEchipaLuna.map((m,mi)=>(
                       <tr key={mi}>
-                        <td className="pl-2 pr-2 py-1 overflow-hidden">
+                        <td className="pl-2 pr-2 py-1">
                           <div className="flex items-center gap-2">
                             <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0"
                               style={m.id===999
@@ -3263,19 +3179,18 @@ export default function RotaFlow() {
                                 : {background:AVATAR_COLORS[mi%5]+'22',color:AVATAR_COLORS[mi%5],border:`1px solid ${AVATAR_COLORS[mi%5]}44`}}>
                               {m.id===999?'SUP':m.nume.substring(0,2).toUpperCase()}
                             </div>
-                            <span className="font-semibold text-[12px] leading-tight">{m.id===999?'Suplinitor':m.nume}</span>
+                            <span className="font-semibold text-[12px] whitespace-nowrap">{m.id===999?'Suplinitor':m.nume}</span>
                           </div>
                         </td>
                         {zileLuna.map((d,di)=>{
                           const t=getTuraW(d,m);
                           const sarb=isSarbatoare(d);
                           const baseType=t.type.replace('↔','');
-                          const esteDeplasare = baseType==='B' && t.label!=='B';
-                          const style=esteDeplasare ? 'bg-purple-950/50 text-purple-300 border border-purple-500/30' : SHIFT_STYLE[baseType]??SHIFT_STYLE.L;
+                          const style=SHIFT_STYLE[baseType]??SHIFT_STYLE.L;
                           return (
                             <td key={di} className="text-center">
-                              <div className={`relative text-[10px] font-black py-1.5 rounded-lg overflow-hidden ${style} ${sarb&&!['L','CO','CM','AN'].includes(baseType)?'ring-1 ring-amber-400/50':''} print-${baseType}`} title={esteDeplasare?t.label:''}>
-                                <span className={esteDeplasare?'block truncate px-0.5 text-[8px]':''}>{baseType==='L'?'':dispLabel(t.label)}</span>
+                              <div className={`relative text-[10px] font-black py-1.5 rounded-lg ${style} ${sarb&&!['L','CO','CM','AN'].includes(baseType)?'ring-1 ring-amber-400/50':''} print-${baseType}`}>
+                                {baseType==='L'?'':dispLabel(t.label)}
                               </div>
                             </td>
                           );
@@ -3701,14 +3616,7 @@ export default function RotaFlow() {
                 <button onClick={()=>setShowMatrice(false)} className="w-7 h-7 flex items-center justify-center bg-white/[0.07] hover:bg-white/10 text-zinc-400 rounded-md"><X size={14}/></button>
               </div>
               <div className="flex-1 overflow-y-auto p-5">
-                <p className="text-[11px] text-zinc-500 mb-3">Cine poate acoperi unde — regula actuală: doar runnerii CTA pot acoperi crize la PLO (niciodată invers).</p>
-                <input
-                  type="text"
-                  value={cautareMatrice}
-                  onChange={e=>setCautareMatrice(e.target.value)}
-                  placeholder="Caută după nume..."
-                  className="w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-teal-500/50 transition-all mb-4"
-                />
+                <p className="text-[11px] text-zinc-500 mb-4">Cine poate acoperi unde — regula actuală: doar runnerii CTA pot acoperi crize la PLO (niciodată invers).</p>
                 <table className="w-full text-[12px]">
                   <thead>
                     <tr className="text-left text-[10px] text-zinc-500 uppercase tracking-wider border-b border-white/[0.08]">
@@ -3719,7 +3627,7 @@ export default function RotaFlow() {
                     </tr>
                   </thead>
                   <tbody>
-                    {echipa.filter(m => m.nume.toLowerCase().includes(cautareMatrice.toLowerCase())).sort((a,b)=>{
+                    {echipa.sort((a,b)=>{
                       const locA=(a.locatieId??1), locB=(b.locatieId??1);
                       if (locA!==locB) return locA-locB;
                       return (a.tip==='runner'?0:1)-(b.tip==='runner'?0:1);
@@ -3760,13 +3668,6 @@ export default function RotaFlow() {
                 <button onClick={()=>setShowCO(false)} className="w-6 h-6 flex items-center justify-center bg-white/[0.07] hover:bg-rose-900/50 text-zinc-400 hover:text-rose-300 rounded-md transition-all"><X size={14}/></button>
               </div>
               <div className="flex-1 overflow-y-auto p-5 space-y-6">
-                <input
-                  type="text"
-                  value={cautareCO}
-                  onChange={e=>setCautareCO(e.target.value)}
-                  placeholder="Caută după nume..."
-                  className="w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-sky-500/50 transition-all"
-                />
                 {/* Vedere combinata, cronologica — cine e plecat unde, din ambele locatii deodata */}
                 {(() => {
                   const azi = new Date(); azi.setHours(0,0,0,0);
@@ -3796,7 +3697,7 @@ export default function RotaFlow() {
                 })()}
 
                 {[{label:'PLO', filtru:(m:Angajat)=>!isCTA(m)}, {label:'CTA', filtru:(m:Angajat)=>isCTA(m)}].map(({label,filtru}) => {
-                  const membriGrup = echipa.map((m,i)=>({m,i})).filter(x=>filtru(x.m) && x.m.nume.toLowerCase().includes(cautareCO.toLowerCase()));
+                  const membriGrup = echipa.map((m,i)=>({m,i})).filter(x=>filtru(x.m));
                   if (membriGrup.length===0) return null;
                   return (
                     <div key={label}>
@@ -4155,81 +4056,41 @@ export default function RotaFlow() {
               </div>
               <div className="flex-1 overflow-y-auto p-5 space-y-3">
                 {toataEchipaCTA.map(m => {
-                  // Citim tip/data live din echipa (se actualizeaza dupa setEchipa)
-                  const angajatLive = echipa.find(a => a.id === m.id);
-                  const tipCurent = angajatLive?.tip ?? 'fix';
-                  const dataCicluCurenta = angajatLive?.dataStartCiclu ?? null;
-                  const areNevoieDeData = tipCurent === 'fix' && !dataCicluCurenta;
+                  // Citim tip live din echipa (se actualizeaza dupa setEchipa)
+                  const tipCurent = echipa.find(a => a.id === m.id)?.tip ?? 'fix';
                   return (
-                  <div key={m.id} className={`bg-white/[0.03] border rounded-xl px-4 py-3 ${areNevoieDeData ? 'border-amber-500/40' : 'border-white/[0.06]'}`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-black"
-                          style={{background:'rgba(42,109,217,0.2)',color:'#60a5fa'}}>
-                          {m.nume.split(' ').map((p:string)=>p[0]).slice(0,2).join('')}
-                        </div>
-                        <span className="text-[13px] font-semibold text-white">{m.nume}</span>
+                  <div key={m.id} className="flex items-center justify-between bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-black"
+                        style={{background:'rgba(42,109,217,0.2)',color:'#60a5fa'}}>
+                        {m.nume.split(' ').map((p:string)=>p[0]).slice(0,2).join('')}
                       </div>
-                      <select
-                        value={tipCurent}
-                        onChange={async e => {
-                          const nouTip = e.target.value;
-                          try {
-                            const res = await fetch('/api/data', {
-                              method: 'PATCH',
-                              headers: {'Content-Type':'application/json'},
-                              body: JSON.stringify({table:'angajati', id: m.uuid, data: {tip: nouTip}})
-                            });
-                            const json = await res.json();
-                            if (res.ok) {
-                              setEchipa(prev => prev.map(a => a.id===m.id ? {...a, tip: nouTip} : a));
-                              addLog(`${m.nume} → rol schimbat la ${nouTip}`);
-                            } else {
-                              alert(`Nu am putut schimba rolul lui ${m.nume}: ${json.error || 'eroare necunoscută'}`);
-                              addLog(`✗ Eroare schimbare rol ${m.nume}: ${json.error}`);
-                            }
-                          } catch(err) {
-                            console.error('Eroare update tip:', err);
-                            alert(`Nu am putut contacta serverul pentru ${m.nume}.`);
-                          }
-                        }}
-                        className="bg-[#1c1c1e] border border-white/10 rounded-lg px-3 py-1.5 text-[12px] font-semibold text-zinc-200 outline-none cursor-pointer"
-                      >
-                        <option value="fix">🔵 La tură (fix)</option>
-                        <option value="runner">🟠 Runner</option>
-                        <option value="birou">💼 Birou</option>
-                      </select>
+                      <span className="text-[13px] font-semibold text-white">{m.nume}</span>
                     </div>
-                    {/* La "fix" fara data de ciclu, arata mereu Liber — cerem data acum */}
-                    {areNevoieDeData && (
-                      <div className="mt-2.5 pt-2.5 border-t border-amber-500/20 flex items-center gap-2">
-                        <span className="text-[10px] text-amber-400 flex-shrink-0">⚠️ Fără dată de ciclu → arată mereu Liber. Alege:</span>
-                        <div className="flex-1">
-                          <MiniDatePicker
-                            value=""
-                            onChange={async v => {
-                              try {
-                                const res = await fetch('/api/data', {
-                                  method: 'PATCH',
-                                  headers: {'Content-Type':'application/json'},
-                                  body: JSON.stringify({table:'angajati', id: m.uuid, data: {data_start_ciclu: v}})
-                                });
-                                const json = await res.json();
-                                if (res.ok) {
-                                  setEchipa(prev => prev.map(a => a.id===m.id ? {...a, dataStartCiclu: v} : a));
-                                  addLog(`${m.nume} → ciclu Z/N pornit din ${v}`);
-                                } else {
-                                  alert(`Nu am putut seta data pentru ${m.nume}: ${json.error || 'eroare necunoscută'}`);
-                                }
-                              } catch(err) {
-                                console.error('Eroare update data_start_ciclu:', err);
-                                alert(`Nu am putut contacta serverul pentru ${m.nume}.`);
-                              }
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
+                    <select
+                      value={tipCurent}
+                      onChange={async e => {
+                        const nouTip = e.target.value;
+                        try {
+                          const res = await fetch('/api/data', {
+                            method: 'PATCH',
+                            headers: {'Content-Type':'application/json'},
+                            body: JSON.stringify({table:'angajati', id: m.uuid, data: {tip: nouTip}})
+                          });
+                          if (res.ok) {
+                            setEchipa(prev => prev.map(a => a.id===m.id ? {...a, tip: nouTip} : a));
+                            addLog(`${m.nume} → rol schimbat la ${nouTip}`);
+                          }
+                        } catch(err) {
+                          console.error('Eroare update tip:', err);
+                        }
+                      }}
+                      className="bg-[#1c1c1e] border border-white/10 rounded-lg px-3 py-1.5 text-[12px] font-semibold text-zinc-200 outline-none cursor-pointer"
+                    >
+                      <option value="fix">🔵 La tură (fix)</option>
+                      <option value="runner">🟠 Runner</option>
+                      <option value="birou">💼 Birou</option>
+                    </select>
                   </div>
                   );
                 })}
@@ -4402,52 +4263,6 @@ export default function RotaFlow() {
                     ✓ Aplică
                   </button>
                 </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Modal Deplasări runner — text liber, per zi, doar saptamana afisata ── */}
-        {deplasarePopup && (
-          <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 no-print" onClick={()=>setDeplasarePopup(null)}>
-            <div className="bg-[#2c2c2e] border border-white/10 rounded-2xl w-full max-w-md shadow-2xl" onClick={e=>e.stopPropagation()}>
-              <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.08]">
-                <div>
-                  <span className="font-bold text-[14px]">Deplasări — {deplasarePopup.angajat.nume}</span>
-                  <p className="text-[10px] text-zinc-500 mt-0.5">Doar pentru zilele de Birou din săptămâna afișată — nu suprascrie ture reale (Z/N)</p>
-                </div>
-                <button onClick={()=>setDeplasarePopup(null)} className="w-7 h-7 flex items-center justify-center bg-white/[0.07] hover:bg-white/10 text-zinc-400 rounded-md flex-shrink-0"><X size={14}/></button>
-              </div>
-              <div className="p-5 space-y-2 max-h-[70vh] overflow-y-auto">
-                {days.map((d,i) => {
-                  const dStr = fmtDateInput(d);
-                  const tActuala = getTuraW(d, deplasarePopup.angajat);
-                  const areOverrideDeplasare = tActuala.type==='B' && tActuala.label!=='B';
-                  const eBirouLiber = tActuala.type==='B';
-                  const poateEdita = eBirouLiber; // Birou normal SAU deja are o deplasare (tot type='B')
-                  return (
-                    <div key={i} className="flex items-center gap-2">
-                      <span className="text-[11px] text-zinc-400 w-20 flex-shrink-0">{DAY_SHORT[i]} {fmtDate(d)}</span>
-                      {poateEdita ? (
-                        <input
-                          type="text"
-                          value={deplasarePopup.texte[dStr] ?? ''}
-                          onChange={e => setDeplasarePopup(prev => prev ? { ...prev, texte: { ...prev.texte, [dStr]: e.target.value } } : prev)}
-                          placeholder="ex. Craiova"
-                          className="flex-1 bg-black/40 border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-[12px] text-white outline-none focus:border-purple-500/50 transition-all"
-                        />
-                      ) : (
-                        <span className="flex-1 text-[11px] text-zinc-600 italic px-2.5 py-1.5">
-                          {tActuala.type==='L' ? 'Liber' : 'tură reală — nu poate fi suprascrisă'}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="px-5 py-4 border-t border-white/[0.08] flex gap-3">
-                <button onClick={()=>setDeplasarePopup(null)} className="flex-1 bg-white/[0.05] border border-white/[0.08] text-zinc-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-white/10 transition-all">Anulează</button>
-                <button onClick={salveazaDeplasari} className="flex-1 bg-purple-900/50 border border-purple-500/40 text-purple-200 text-[12px] font-semibold py-2 rounded-lg hover:bg-purple-800/60 transition-all">Salvează</button>
               </div>
             </div>
           </div>

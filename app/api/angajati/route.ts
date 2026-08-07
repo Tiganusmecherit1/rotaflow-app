@@ -12,12 +12,7 @@ export async function PATCH(request: Request) {
 
     const updateData: Record<string, unknown> = {};
     if (nume !== undefined) updateData.nume = nume;
-    if (zile_co !== undefined) {
-      if (typeof zile_co !== 'number' || !Number.isFinite(zile_co) || zile_co < 0 || zile_co > 60) {
-        return NextResponse.json({ error: 'zile_co invalid — trebuie sa fie un numar intre 0 si 60' }, { status: 400 });
-      }
-      updateData.zile_co = zile_co;
-    }
+    if (zile_co !== undefined) updateData.zile_co = zile_co;
 
     const { data, error } = await supabaseAdmin
       .from('angajati')
