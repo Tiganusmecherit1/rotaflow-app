@@ -1166,6 +1166,7 @@ export default function RotaFlow() {
   const [lunaOffset, setLunaOffset] = useState(0);
   const [showPdfPicker, setShowPdfPicker] = useState(false);
   const [showConformitatePicker, setShowConformitatePicker] = useState(false);
+  const [showMeniuPrincipal, setShowMeniuPrincipal] = useState(false);
   const [conformitateStart, setConformitateStart] = useState(() => fmtDateInput(new Date(Date.now() - 90*86400000)));
   const [conformitateEnd, setConformitateEnd] = useState(() => fmtDateInput(new Date()));
   const [pdfLunaDate, setPdfLunaDate] = useState(() => {
@@ -2488,7 +2489,7 @@ export default function RotaFlow() {
 
     autoTable(doc, {
       startY: 37,
-      head: [['Angajat', 'Săptămâni verificate', 'Săpt. la limita 48h', 'Max zile consecutive', 'Încălcări 48h', 'Încălcări 6 zile', 'Încălcări repaus']],
+      head: [['Angajat', 'Saptamani verificate', 'Sapt. la limita 48h', 'Max zile consecutive', 'Incalcari 48h', 'Incalcari 6 zile', 'Incalcari repaus']],
       body: randuri.map(r => [
         faraDiacritice(r.nume), r.saptamaniTotale.toString(), r.saptamaniLa48h.toString(), r.maxConsecutive.toString(),
         r.violari48h.toString(), r.violari6zile.toString(), r.violariSD.toString(),
@@ -2804,35 +2805,6 @@ export default function RotaFlow() {
               </div>
               </>
             )}
-            <div className="relative">
-              <button onClick={()=>setShowConformitatePicker(p=>!p)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-500/30 text-slate-300 text-[12px] font-semibold hover:bg-slate-700 transition-all">
-                <FileDown size={13}/> Conformitate
-              </button>
-              {showConformitatePicker && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={()=>setShowConformitatePicker(false)}/>
-                  <div className="absolute top-9 left-0 z-50 bg-[#2c2c2e] border border-white/[0.1] rounded-xl shadow-2xl p-3 w-64" onClick={e=>e.stopPropagation()}>
-                    <p className="text-[11px] text-zinc-400 font-semibold mb-2">Raport de conformitate — alege perioada:</p>
-                    <div className="flex items-center gap-2 mb-2">
-                      <input type="date" value={conformitateStart} onChange={e=>setConformitateStart(e.target.value)}
-                        className="flex-1 bg-black/40 border border-white/[0.08] rounded-lg px-2 py-1.5 text-[11px] text-white outline-none focus:border-slate-400/50"/>
-                      <span className="text-zinc-600 text-[11px]">–</span>
-                      <input type="date" value={conformitateEnd} onChange={e=>setConformitateEnd(e.target.value)}
-                        className="flex-1 bg-black/40 border border-white/[0.08] rounded-lg px-2 py-1.5 text-[11px] text-white outline-none focus:border-slate-400/50"/>
-                    </div>
-                    <button onClick={()=>{
-                      generateRaportConformitate(parseD(conformitateStart), parseD(conformitateEnd));
-                      setShowConformitatePicker(false);
-                    }} className="w-full bg-slate-700 border border-slate-500/40 text-slate-200 text-[12px] font-semibold py-1.5 rounded-lg hover:bg-slate-600 transition-all flex items-center justify-center gap-1.5">
-                      <FileDown size={12}/> Generează raport
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-            <button onClick={()=>window.print()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-300 text-[12px] font-semibold hover:bg-zinc-700 transition-all">
-              <Printer size={13}/> Print
-            </button>
             <button onClick={sincronizeazaDB} disabled={syncLoading}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] font-semibold transition-all disabled:opacity-50
                 ${syncError ? 'bg-red-900/50 border-red-500/40 text-red-300' : syncOk ? 'bg-green-900/50 border-green-500/40 text-green-300' : 'bg-blue-900/40 border-blue-500/30 text-blue-300 hover:bg-blue-800/50'}`}>
@@ -2852,59 +2824,106 @@ export default function RotaFlow() {
                 <button onClick={()=>setSyncError(null)} className="text-red-400/70 hover:text-red-300">✕</button>
               </div>
             )}
-            <button onClick={()=>setShowCO(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-900/40 border border-sky-500/30 text-sky-300 text-[12px] font-semibold hover:bg-sky-800/50 transition-all">
-              <Calendar size={13}/> Concedii
-            </button>
-            <button onClick={()=>setShowMatrice(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-900/40 border border-teal-500/30 text-teal-300 text-[12px] font-semibold hover:bg-teal-800/50 transition-all">
-              <Scale size={13}/> Matrice
-            </button>
-            <button onClick={()=>setShowCertificari(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-900/40 border border-orange-500/30 text-orange-300 text-[12px] font-semibold hover:bg-orange-800/50 transition-all">
-              <HeartPulse size={13}/> Certificări
-            </button>
-            <button onClick={()=>setShowAnalizaTermenLung(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-900/40 border border-violet-500/30 text-violet-300 text-[12px] font-semibold hover:bg-violet-800/50 transition-all">
-              <Trophy size={13}/> Analiză
-            </button>
-            <button onClick={()=>{ setModSelectieMultipla(p=>!p); setCeluleSelectate(new Set()); }} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] font-semibold transition-all ${modSelectieMultipla?'bg-sky-900/50 border-sky-500/50 text-sky-300':'bg-zinc-800 border-zinc-600 text-zinc-300 hover:bg-zinc-700'}`}>
-              <Check size={13}/> {modSelectieMultipla?'Ieși din selecție':'Selectare multiplă'}
-            </button>
-            {locatieActiva==='PLO' && (
+
+            {/* ── Meniu unificat — restul actiunilor, ca sa nu se aglomereze bara ── */}
+            <div className="relative">
+              <button onClick={()=>setShowMeniuPrincipal(p=>!p)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-300 text-[12px] font-semibold hover:bg-zinc-700 transition-all">
+                <Edit3 size={13}/> Meniu
+              </button>
+              {showMeniuPrincipal && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={()=>setShowMeniuPrincipal(false)}/>
+                  <div className="absolute top-9 left-0 z-50 bg-[#2c2c2e] border border-white/[0.1] rounded-xl shadow-2xl p-1.5 w-56 flex flex-col gap-0.5" onClick={e=>e.stopPropagation()}>
+                    <button onClick={()=>{ setShowCO(true); setShowMeniuPrincipal(false); }} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-sky-300 hover:bg-white/[0.06] transition-all text-left">
+                      <Calendar size={14}/> Concedii
+                    </button>
+                    <button onClick={()=>{ setShowMatrice(true); setShowMeniuPrincipal(false); }} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-teal-300 hover:bg-white/[0.06] transition-all text-left">
+                      <Scale size={14}/> Matrice
+                    </button>
+                    <button onClick={()=>{ setShowCertificari(true); setShowMeniuPrincipal(false); }} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-orange-300 hover:bg-white/[0.06] transition-all text-left">
+                      <HeartPulse size={14}/> Certificări
+                    </button>
+                    <button onClick={()=>{ setShowAnalizaTermenLung(true); setShowMeniuPrincipal(false); }} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-violet-300 hover:bg-white/[0.06] transition-all text-left">
+                      <Trophy size={14}/> Analiză termen lung
+                    </button>
+                    <button onClick={()=>{ setShowConformitatePicker(true); setShowMeniuPrincipal(false); }} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-slate-300 hover:bg-white/[0.06] transition-all text-left">
+                      <FileDown size={14}/> Raport conformitate
+                    </button>
+                    <div className="h-px bg-white/[0.06] my-1"/>
+                    <button onClick={()=>{ setModSelectieMultipla(p=>!p); setCeluleSelectate(new Set()); setShowMeniuPrincipal(false); }} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold hover:bg-white/[0.06] transition-all text-left ${modSelectieMultipla?'text-sky-300':'text-zinc-300'}`}>
+                      <Check size={14}/> {modSelectieMultipla?'Ieși din selecția multiplă':'Selectare multiplă'}
+                    </button>
+                    <button onClick={()=>{ window.print(); setShowMeniuPrincipal(false); }} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-zinc-300 hover:bg-white/[0.06] transition-all text-left">
+                      <Printer size={14}/> Print
+                    </button>
+                    {locatieActiva==='PLO' && (
+                      <>
+                        <div className="h-px bg-white/[0.06] my-1"/>
+                        <button onClick={()=>{ setShowUrgente(true); setShowMeniuPrincipal(false); }} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold hover:bg-white/[0.06] transition-all text-left ${modeAvarie?'text-orange-300':'text-rose-300'}`}>
+                          <AlertTriangle size={14}/> Urgențe
+                        </button>
+                        <button onClick={()=>{ setShowSimulare(true); setShowMeniuPrincipal(false); }} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-purple-300 hover:bg-white/[0.06] transition-all text-left">
+                          <FlaskConical size={14}/> Simulare Concedii
+                        </button>
+                        <button onClick={()=>{
+                          if (intervaleCrizaPLO.length > 0) {
+                            const prima = intervaleCrizaPLO[0];
+                            const primaZiCriza = fmtDateInput(prima.start);
+                            const ultimaZiCriza = fmtDateInput(prima.end);
+                            setModCrizaPerioada('auto');
+                            setPlanCrizaStart(primaZiCriza);
+                            setPlanCrizaEnd(ultimaZiCriza);
+                            setPlanCrizaIssues(alertePersonalInsuficientPLO.map(a => ({
+                              tip: 'PUTINI_OAMENI' as const,
+                              data: fmtDateInput(a.zi),
+                              detalii: `${fmtDate(a.zi)}: ${a.totalActivi} activi din ${echipa.length} (necesari minim 4 fără suplinitor)`,
+                            })));
+                            setPlanCrizaSimConcedii([]);
+                            const p = genereazaPlanCriza(echipa, primaZiCriza, [], [], ultimaZiCriza);
+                            if (p) setPlanCriza(p);
+                          } else {
+                            setModCrizaPerioada('manual');
+                            setPlanCrizaStart(fmtDateInput(new Date()));
+                            setPlanCrizaEnd('');
+                            setPlanCrizaIssues([]);
+                            setPlanCrizaSimConcedii([]);
+                            setPlanCriza(null);
+                          }
+                          setShowPlanCriza(true);
+                          setShowMeniuPrincipal(false);
+                        }} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-red-300 hover:bg-white/[0.06] transition-all text-left">
+                          <AlertTriangle size={14}/> Plan Criză
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Popup separat pentru raportul de conformitate — deschis din meniu */}
+            {showConformitatePicker && (
               <>
-                <button onClick={()=>setShowUrgente(true)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] font-semibold transition-all ${modeAvarie?'bg-orange-900/50 border-orange-500/50 text-orange-300 animate-pulse':'bg-rose-900/40 border-rose-500/30 text-rose-300 hover:bg-rose-800/50'}`}>
-                  <AlertTriangle size={13}/> Urgențe
-                </button>
-                <button onClick={()=>setShowSimulare(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-900/40 border border-purple-500/30 text-purple-300 text-[12px] font-semibold hover:bg-purple-800/50 transition-all">
-                  <FlaskConical size={13}/> Simulare Concedii
-                </button>
+                <div className="fixed inset-0 z-40" onClick={()=>setShowConformitatePicker(false)}/>
+                <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-[#2c2c2e] border border-white/[0.1] rounded-xl shadow-2xl p-3 w-64" onClick={e=>e.stopPropagation()}>
+                  <p className="text-[11px] text-zinc-400 font-semibold mb-2">Raport de conformitate — alege perioada:</p>
+                  <div className="flex items-center gap-2 mb-2">
+                    <input type="date" value={conformitateStart} onChange={e=>setConformitateStart(e.target.value)}
+                      className="flex-1 bg-black/40 border border-white/[0.08] rounded-lg px-2 py-1.5 text-[11px] text-white outline-none focus:border-slate-400/50"/>
+                    <span className="text-zinc-600 text-[11px]">–</span>
+                    <input type="date" value={conformitateEnd} onChange={e=>setConformitateEnd(e.target.value)}
+                      className="flex-1 bg-black/40 border border-white/[0.08] rounded-lg px-2 py-1.5 text-[11px] text-white outline-none focus:border-slate-400/50"/>
+                  </div>
+                  <button onClick={()=>{
+                    generateRaportConformitate(parseD(conformitateStart), parseD(conformitateEnd));
+                    setShowConformitatePicker(false);
+                  }} className="w-full bg-slate-700 border border-slate-500/40 text-slate-200 text-[12px] font-semibold py-1.5 rounded-lg hover:bg-slate-600 transition-all flex items-center justify-center gap-1.5">
+                    <FileDown size={12}/> Generează raport
+                  </button>
+                </div>
               </>
             )}
-            <button onClick={()=>{
-              if (intervaleCrizaPLO.length > 0) {
-                const prima = intervaleCrizaPLO[0];
-                const primaZiCriza = fmtDateInput(prima.start);
-                const ultimaZiCriza = fmtDateInput(prima.end);
-                setModCrizaPerioada('auto');
-                setPlanCrizaStart(primaZiCriza);
-                setPlanCrizaEnd(ultimaZiCriza);
-                setPlanCrizaIssues(alertePersonalInsuficientPLO.map(a => ({
-                  tip: 'PUTINI_OAMENI' as const,
-                  data: fmtDateInput(a.zi),
-                  detalii: `${fmtDate(a.zi)}: ${a.totalActivi} activi din ${echipa.length} (necesari minim 4 fără suplinitor)`,
-                })));
-                setPlanCrizaSimConcedii([]);
-                const p = genereazaPlanCriza(echipa, primaZiCriza, [], [], ultimaZiCriza);
-                if (p) setPlanCriza(p);
-              } else {
-                setModCrizaPerioada('manual');
-                setPlanCrizaStart(fmtDateInput(new Date()));
-                setPlanCrizaEnd('');
-                setPlanCrizaIssues([]);
-                setPlanCrizaSimConcedii([]);
-                setPlanCriza(null);
-              }
-              setShowPlanCriza(true);
-            }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 border border-red-500/30 text-red-300 text-[12px] font-semibold hover:bg-red-800/50 transition-all">
-              <AlertTriangle size={13}/> Plan Criză
-            </button>
+
             <button onClick={()=>{ if(confirm('Ieși din aplicație?')) logout(); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-400 text-[12px] font-semibold hover:bg-zinc-700 hover:text-zinc-200 transition-all ml-auto">
               <LogOut size={13}/> Logout
             </button>
