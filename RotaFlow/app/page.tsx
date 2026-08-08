@@ -26,12 +26,12 @@ interface Concediu { n: string; s: string; e: string; uuid?: string }
 interface Absenta { startDate: string; zile: number; tip: 'CM' | 'AN'; uuid?: string }
 interface Swap { id: string; aId: number; aData: string; bId: number; bData: string; nota: string }
 interface TuraOverride { id: string; angajatId: number; data: string; tura: string; expiraLa: string } // expiraLa = data plecarii suplinitorului. tura poate fi si text liber (ex. deplasare)
-interface Angajat { id: number; uuid?: string; nume: string; zileCO: number; concedii: Concediu[]; absente: Absenta[]; locatieId?: number; tip?: string; dataStartCiclu?: string | null }
+interface Angajat { id: number; uuid?: string; nume: string; zileCO: number; zileCOReportate?: number; zileCOReportateExpira?: string | null; concedii: Concediu[]; absente: Absenta[]; locatieId?: number; tip?: string; dataStartCiclu?: string | null }
 interface LogEntry { ts: string; msg: string }
 interface SimConcediu { id: string; angajatId: number; start: string; zile: number }
 
 // ─── Tipuri brute din Supabase ───
-interface SbAngajat { id: string; nume: string; pozitie_rotatie: number; zile_co: number; este_sef: boolean; activ: boolean; locatie_id?: number; tip?: string; poate_rula?: boolean; data_start_ciclu?: string | null }
+interface SbAngajat { id: string; nume: string; pozitie_rotatie: number; zile_co: number; zile_co_reportate?: number; zile_co_reportate_expira?: string | null; este_sef: boolean; activ: boolean; locatie_id?: number; tip?: string; poate_rula?: boolean; data_start_ciclu?: string | null }
 interface SbConcediu { id: string; angajat_id: string; data_start: string; data_sfarsit: string; nume_slot: string | null; zile_lucratoare: number }
 interface SbAbsenta { id: string; angajat_id: string; tip: 'CM' | 'AN'; data_start: string; zile: number }
 interface SbSwap { id: string; solicitant_id: string; solicitant_data: string; partener_id: string; partener_data: string; nota: string | null; status: string; created_at: string }
@@ -59,6 +59,8 @@ function adapteazaDateDinSupabase(
       uuid: a.id,
       nume: a.nume,
       zileCO: a.zile_co,
+      zileCOReportate: a.zile_co_reportate ?? 0,
+      zileCOReportateExpira: a.zile_co_reportate_expira ?? null,
       locatieId: a.locatie_id ?? 1,
       tip: a.tip ?? 'fix',
       dataStartCiclu: a.data_start_ciclu ?? null,
@@ -131,7 +133,7 @@ async function apiAdaugaIstoric(mesaj: string) {
   if (!res.ok) console.error('Eroare la adaugarea in istoric');
   return res.json().catch(() => null);
 }
-async function apiActualizeazaAngajat(id: string, payload: { nume?: string; zile_co?: number }) {
+async function apiActualizeazaAngajat(id: string, payload: { nume?: string; zile_co?: number; zile_co_reportate?: number; zile_co_reportate_expira?: string | null }) {
   const res = await fetch('/api/angajati', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, ...payload }),
@@ -140,7 +142,22 @@ async function apiActualizeazaAngajat(id: string, payload: { nume?: string; zile
   return res.json();
 }
 
-// ─── Helpers ───
+// Scade zile de CO — foloseste INTAI zilele reportate (daca exista si nu au expirat),
+// apoi cele normale. Reportarea are sens doar daca se consuma prima, altfel expira degeaba.
+function scadeZileCO(m: Angajat, zileDeScazut: number, aziStr: string): { zileCO: number; zileCOReportate: number } {
+  const reportateValide = (m.zileCOReportate ?? 0) > 0 && (!m.zileCOReportateExpira || m.zileCOReportateExpira >= aziStr);
+  if (!reportateValide) {
+    return { zileCO: Math.max(0, m.zileCO - zileDeScazut), zileCOReportate: m.zileCOReportate ?? 0 };
+  }
+  const dinReportate = Math.min(m.zileCOReportate ?? 0, zileDeScazut);
+  const ramasDeScazut = zileDeScazut - dinReportate;
+  return {
+    zileCOReportate: Math.max(0, (m.zileCOReportate ?? 0) - dinReportate),
+    zileCO: Math.max(0, m.zileCO - ramasDeScazut),
+  };
+}
+
+
 function getMonday(d: Date): Date {
   const r = new Date(d); const day = r.getDay();
   r.setDate(r.getDate() + (day === 0 ? -6 : 1 - day)); r.setHours(0,0,0,0); return r;
@@ -954,6 +971,9 @@ export default function RotaFlow() {
   } | null>(null);
   // Popup deplasare runner — text liber, per zi, doar pentru saptamana afisata
   const [deplasarePopup, setDeplasarePopup] = useState<{ angajat: Angajat; texte: Record<string,string> } | null>(null);
+  // Note de predare tura — un rand per (angajat, zi)
+  const [noteTura, setNoteTura] = useState<{id:string;angajat_id:string;data:string;text:string;creat_la:string}[]>([]);
+  const [notaPopup, setNotaPopup] = useState<{ angajat: Angajat; dStr: string; text: string } | null>(null);
   // Runner asignat per concediu CTA: cheie = "angajatId_dataStart"
   const [runnerAsignat, setRunnerAsignat] = useState<Record<string, number|null>>({});
   // Stocheaza: runnerId → { dataStart, perioadaStart, perioadaSfarsit }
@@ -1177,6 +1197,10 @@ export default function RotaFlow() {
           nota: s.nota ?? '',
         }));
       setSwapuriRaw(swapuriAdaptate);
+
+      // Note de predare tura — ultimele 30 de zile
+      const acum30zile = fmtDateInput(new Date(Date.now() - 30*86400000));
+      fetch(`/api/note-tura?de=${acum30zile}`).then(r=>r.ok?r.json():null).then(json => { if (json?.note) setNoteTura(json.note); }).catch(()=>{});
 
       const logAdaptat: LogEntry[] = sbIstoric.map(l => ({
         ts: new Date(l.created_at).toLocaleDateString('ro-RO', { day:'2-digit', month:'2-digit', year:'numeric' }) + ' ' + new Date(l.created_at).toLocaleTimeString('ro-RO', { hour:'2-digit', minute:'2-digit' }),
@@ -1695,7 +1719,8 @@ export default function RotaFlow() {
     const zl=countZileLucratoareReale(slot.s,slot.e,angajatTarget);
 
     setEchipa(prev=>{
-      const next=prev.map((m,i)=>i!==pi?m:{...m,concedii:[...m.concedii,slot],zileCO:Math.max(0,m.zileCO-zl)});
+      const azi = fmtDateInput(new Date());
+      const next=prev.map((m,i)=>i!==pi?m:{...m,concedii:[...m.concedii,slot],...scadeZileCO(m,zl,azi)});
       return next;
     });
     addLog(`CO adăugat: ${angajatTarget.nume} — ${slot.n}${zl<countZileLucratoare(slot.s,slot.e)?' (zile suprapuse excluse din cost)':''}`);
@@ -1711,6 +1736,35 @@ export default function RotaFlow() {
   // Salveaza textele de deplasare pentru runner-ul din deplasarePopup — doar pe
   // zilele unde omul e efectiv la Birou (sau are deja o deplasare acolo), ca sa
   // nu suprascriem niciodata o tura reala Z/N.
+  // Salveaza (sau actualizeaza) nota de predare pentru un angajat, intr-o zi anume
+  const salveazaNota = useCallback(async (angajat: Angajat, dStr: string, text: string) => {
+    if (!angajat.uuid) return;
+    if (!text.trim()) {
+      // text gol = stergem nota daca exista
+      const existenta = noteTura.find(n => n.angajat_id === angajat.uuid && n.data === dStr);
+      if (existenta) {
+        setNoteTura(prev => prev.filter(n => n.id !== existenta.id));
+        fetch(`/api/note-tura?id=${existenta.id}`, { method: 'DELETE' }).catch(()=>{});
+      }
+      setNotaPopup(null);
+      return;
+    }
+    try {
+      const res = await fetch('/api/note-tura', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ angajat_id: angajat.uuid, data: dStr, text }),
+      });
+      const json = await res.json();
+      if (res.ok && json.nota) {
+        setNoteTura(prev => [json.nota, ...prev.filter(n => n.id !== json.nota.id)]);
+        addLog(`Notă de predare: ${angajat.nume}, ${fmtDate(parseD(dStr))}`);
+      }
+    } catch (err) {
+      console.error('Eroare salvare nota:', err);
+    }
+    setNotaPopup(null);
+  }, [noteTura, addLog]);
+
   const salveazaDeplasari = useCallback(() => {
     if (!deplasarePopup) return;
     const { angajat, texte } = deplasarePopup;
@@ -2128,7 +2182,8 @@ export default function RotaFlow() {
         }
       });
 
-      return { ...m, concedii: [...m.concedii, ...noiConcedii], zileCO: Math.max(0, m.zileCO - zileTotale) };
+      const azi = fmtDateInput(new Date());
+      return { ...m, concedii: [...m.concedii, ...noiConcedii], ...scadeZileCO(m, zileTotale, azi) };
     }));
 
     if (simSuplinitor) setSuplinitorActiv(true);
@@ -2629,6 +2684,28 @@ export default function RotaFlow() {
 
         <div className="flex-1 p-4 md:p-6 max-w-7xl mx-auto w-full space-y-5">
 
+          {/* Avertizare: zile de CO reportate care expira curand, nefolosite */}
+          {(() => {
+            const azi = fmtDateInput(new Date());
+            const in60zile = fmtDateInput(new Date(Date.now()+60*86400000));
+            const cuExpirare = echipa.filter(m => (m.zileCOReportate??0) > 0 && m.zileCOReportateExpira && m.zileCOReportateExpira >= azi && m.zileCOReportateExpira < in60zile);
+            if (cuExpirare.length === 0) return null;
+            return (
+              <div className="bg-amber-950/30 border border-amber-500/30 rounded-xl p-3.5 flex items-center gap-3 no-print">
+                <AlertTriangle size={18} className="text-amber-400 flex-shrink-0"/>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[12px] font-bold text-amber-300">Zile de concediu reportate, pe cale să expire</p>
+                  <p className="text-[11px] text-amber-400/80">
+                    {cuExpirare.map(m => `${m.nume} (${m.zileCOReportate}z, exp. ${fmtDate(parseD(m.zileCOReportateExpira!))})`).join(' · ')}
+                  </p>
+                </div>
+                <button onClick={()=>setShowCO(true)} className="flex-shrink-0 text-[10px] font-semibold px-2.5 py-1.5 rounded-lg bg-amber-900/50 border border-amber-500/40 text-amber-200 hover:bg-amber-800/60 transition-all whitespace-nowrap">
+                  Planifică →
+                </button>
+              </div>
+            );
+          })()}
+
           {/* Dashboard unificat de criza — ambele locatii, mereu vizibil, indiferent de tab */}
           {(intervaleCrizaPLO.length > 0 || intervaleCrizaCTA.length > 0) && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 no-print">
@@ -3076,7 +3153,7 @@ export default function RotaFlow() {
                                       ? 'Click = Z/L · Click dr = N/L · din nou = șterge'
                                       : 'Click stg = Z · Click dr = N · din nou = șterge'
                                   }
-                                  className={`relative text-[13px] font-black py-3 px-2 rounded-xl transition-all select-none
+                                  className={`relative group text-[13px] font-black py-3 px-2 rounded-xl transition-all select-none
                                     ${styleRunnerSau}
                                     ${t.swapped?'ring-2 ring-amber-400/60':''}
                                     ${hasManualOverride?'ring-2 ring-white/30':''}
@@ -3102,6 +3179,16 @@ export default function RotaFlow() {
                                   )}
                                   {sarb&&!['L','CO','CM','AN','B'].includes(baseType)&&<span className="absolute -top-1.5 -right-1 text-amber-400 text-[10px]">★</span>}
                                   {hasManualOverride&&<span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-white/50"/>}
+                                  {(() => {
+                                    const notaExistenta = noteTura.find(n => n.angajat_id === m.uuid && n.data === dStr);
+                                    return (
+                                      <span
+                                        onClick={e => { e.stopPropagation(); setNotaPopup({ angajat: m, dStr, text: notaExistenta?.text ?? '' }); }}
+                                        title={notaExistenta ? notaExistenta.text : 'Adaugă notă de predare'}
+                                        className={`absolute -bottom-1 -left-1 w-4 h-4 rounded-full flex items-center justify-center text-[9px] transition-all ${notaExistenta ? 'bg-amber-500 text-black opacity-100' : 'bg-white/10 text-white/40 opacity-0 group-hover:opacity-100 hover:bg-white/20'}`}
+                                      >📝</span>
+                                    );
+                                  })()}
                                 </div>
                               </td>
                             );
@@ -3833,6 +3920,41 @@ export default function RotaFlow() {
                                 />
                               </div>
                             </div>
+                            {(() => {
+                              const azi = fmtDateInput(new Date());
+                              const areReportate = (m.zileCOReportate ?? 0) > 0;
+                              const expiraCurand = areReportate && m.zileCOReportateExpira && m.zileCOReportateExpira < fmtDateInput(new Date(Date.now()+60*86400000));
+                              const expirat = areReportate && m.zileCOReportateExpira && m.zileCOReportateExpira < azi;
+                              return (
+                                <div className={`flex items-center justify-between mb-2 px-2 py-1.5 rounded-lg ${expirat?'bg-red-950/30 border border-red-500/20':expiraCurand?'bg-amber-950/30 border border-amber-500/20':'bg-white/[0.02]'}`}>
+                                  <span className="text-[10px] text-zinc-500">
+                                    {expirat ? '⚠️ reportate expirate, nefolosite:' : expiraCurand ? '⚠️ reportate — expiră curând:' : 'zile reportate (din anii trecuți):'}
+                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    <input type="number" min={0} value={m.zileCOReportate ?? 0}
+                                      onChange={e => {
+                                        const nou = Math.max(0, Number(e.target.value) || 0);
+                                        setEchipa(prev => prev.map((a,ai) => ai!==i ? a : {...a, zileCOReportate: nou}));
+                                      }}
+                                      onBlur={e => {
+                                        const nou = Math.max(0, Number(e.target.value) || 0);
+                                        if (m.uuid) apiActualizeazaAngajat(m.uuid, { zile_co_reportate: nou }).catch(err => console.error('Eroare la salvarea zilelor reportate:', err));
+                                      }}
+                                      className="w-12 bg-black/40 border border-white/[0.08] rounded-md px-1 py-0.5 text-[10px] text-white text-center outline-none focus:border-amber-500/50"
+                                    />
+                                    <span className="text-[9px] text-zinc-600">exp.</span>
+                                    <input type="date" value={m.zileCOReportateExpira ?? ''}
+                                      onChange={e => {
+                                        const nou = e.target.value || null;
+                                        setEchipa(prev => prev.map((a,ai) => ai!==i ? a : {...a, zileCOReportateExpira: nou}));
+                                        if (m.uuid) apiActualizeazaAngajat(m.uuid, { zile_co_reportate_expira: nou }).catch(err => console.error('Eroare la salvarea datei de expirare:', err));
+                                      }}
+                                      className="bg-black/40 border border-white/[0.08] rounded-md px-1 py-0.5 text-[10px] text-white outline-none focus:border-amber-500/50"
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })()}
                             {m.concedii.length>0&&(
                               <div className="flex flex-wrap gap-1.5 mb-3">
                                 {m.concedii.map((c,ci)=>(
@@ -4460,6 +4582,37 @@ export default function RotaFlow() {
               <div className="px-5 py-4 border-t border-white/[0.08] flex gap-3">
                 <button onClick={()=>setDeplasarePopup(null)} className="flex-1 bg-white/[0.05] border border-white/[0.08] text-zinc-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-white/10 transition-all">Anulează</button>
                 <button onClick={salveazaDeplasari} className="flex-1 bg-purple-900/50 border border-purple-500/40 text-purple-200 text-[12px] font-semibold py-2 rounded-lg hover:bg-purple-800/60 transition-all">Salvează</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Modal Notă de predare tură ── */}
+        {notaPopup && (
+          <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 no-print" onClick={()=>setNotaPopup(null)}>
+            <div className="bg-[#2c2c2e] border border-white/10 rounded-2xl w-full max-w-md shadow-2xl" onClick={e=>e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.08]">
+                <div>
+                  <span className="font-bold text-[14px]">📝 Notă de predare</span>
+                  <p className="text-[10px] text-zinc-500 mt-0.5">{notaPopup.angajat.nume} — {fmtDate(parseD(notaPopup.dStr))}</p>
+                </div>
+                <button onClick={()=>setNotaPopup(null)} className="w-7 h-7 flex items-center justify-center bg-white/[0.07] hover:bg-white/10 text-zinc-400 rounded-md flex-shrink-0"><X size={14}/></button>
+              </div>
+              <div className="p-5">
+                <textarea
+                  autoFocus
+                  value={notaPopup.text}
+                  onChange={e => setNotaPopup(prev => prev ? { ...prev, text: e.target.value } : prev)}
+                  placeholder="ex. Clientul X a sunat, verifică mâine. Presiunea la echipamentul Y era scăzută."
+                  rows={4}
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2.5 text-[13px] text-white outline-none focus:border-amber-500/50 transition-all resize-none"
+                />
+              </div>
+              <div className="px-5 py-4 border-t border-white/[0.08] flex gap-3">
+                <button onClick={()=>setNotaPopup(null)} className="flex-1 bg-white/[0.05] border border-white/[0.08] text-zinc-300 text-[12px] font-semibold py-2 rounded-lg hover:bg-white/10 transition-all">Anulează</button>
+                <button onClick={()=>salveazaNota(notaPopup.angajat, notaPopup.dStr, notaPopup.text)} className="flex-1 bg-amber-900/50 border border-amber-500/40 text-amber-200 text-[12px] font-semibold py-2 rounded-lg hover:bg-amber-800/60 transition-all">
+                  {notaPopup.text.trim() ? 'Salvează' : 'Șterge nota'}
+                </button>
               </div>
             </div>
           </div>

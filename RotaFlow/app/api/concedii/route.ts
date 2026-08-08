@@ -18,13 +18,26 @@ export async function POST(request: Request) {
 
     if (error) throw error;
 
-    // Scadem zilele de CO ramase ale angajatului
+    // Scadem zilele de CO ramase ale angajatului — din cele reportate intai (daca exista
+    // si nu au expirat), apoi din cele normale. Trebuie sa fie IDENTIC cu logica din client
+    // (scadeZileCO), altfel bazele de date si interfata diverg.
     if (zile_lucratoare) {
-      const { data: angajat } = await supabaseAdmin.from('angajati').select('zile_co').eq('id', angajat_id).single();
+      const { data: angajat } = await supabaseAdmin.from('angajati').select('zile_co, zile_co_reportate, zile_co_reportate_expira').eq('id', angajat_id).single();
       if (angajat) {
+        const azi = new Date().toISOString().split('T')[0];
+        const reportateValide = (angajat.zile_co_reportate ?? 0) > 0 && (!angajat.zile_co_reportate_expira || angajat.zile_co_reportate_expira >= azi);
+        let zile_co_nou = angajat.zile_co;
+        let zile_co_reportate_nou = angajat.zile_co_reportate ?? 0;
+        if (reportateValide) {
+          const dinReportate = Math.min(angajat.zile_co_reportate ?? 0, zile_lucratoare);
+          zile_co_reportate_nou = Math.max(0, (angajat.zile_co_reportate ?? 0) - dinReportate);
+          zile_co_nou = Math.max(0, angajat.zile_co - (zile_lucratoare - dinReportate));
+        } else {
+          zile_co_nou = Math.max(0, angajat.zile_co - zile_lucratoare);
+        }
         await supabaseAdmin
           .from('angajati')
-          .update({ zile_co: Math.max(0, angajat.zile_co - zile_lucratoare) })
+          .update({ zile_co: zile_co_nou, zile_co_reportate: zile_co_reportate_nou })
           .eq('id', angajat_id);
       }
     }
