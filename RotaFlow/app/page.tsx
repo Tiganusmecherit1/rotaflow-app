@@ -975,6 +975,12 @@ export default function RotaFlow() {
   const [noteTura, setNoteTura] = useState<{id:string;angajat_id:string;data:string;text:string;creat_la:string}[]>([]);
   const [certificari, setCertificari] = useState<{id:string;angajat_id:string;nume_certificat:string;data_obtinere:string|null;data_expirare:string|null;note:string|null}[]>([]);
   const [showCertificari, setShowCertificari] = useState(false);
+  const [showPersonal, setShowPersonal] = useState(false);
+  const [personalMod, setPersonalMod] = useState<'lista'|'adauga'|'inlocuieste'>('lista');
+  const [personalTarget, setPersonalTarget] = useState<Angajat|null>(null);
+  const [personalForm, setPersonalForm] = useState({ nume: '', locatieId: 1, tip: 'fix', dataStartCiclu: '', creeazaCont: true });
+  const [personalLoading, setPersonalLoading] = useState(false);
+  const [personalRezultat, setPersonalRezultat] = useState<{email:string;parola:string;mesaj:string}|null>(null);
   const [certNouForm, setCertNouForm] = useState<Record<string,{nume:string;dataExpirare:string}>>({});
   const [cautareCert, setCautareCert] = useState('');
   const [showAnalizaTermenLung, setShowAnalizaTermenLung] = useState(false);
@@ -1753,6 +1759,75 @@ export default function RotaFlow() {
   // zilele unde omul e efectiv la Birou (sau are deja o deplasare acolo), ca sa
   // nu suprascriem niciodata o tura reala Z/N.
   // Salveaza (sau actualizeaza) nota de predare pentru un angajat, intr-o zi anume
+  const adaugaAngajatNou = useCallback(async () => {
+    setPersonalLoading(true);
+    setPersonalRezultat(null);
+    try {
+      const res = await fetch('/api/personal', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actiune: 'adauga', nume: personalForm.nume, locatie_id: personalForm.locatieId,
+          tip: personalForm.tip, data_start_ciclu: personalForm.dataStartCiclu || null,
+          creeaza_cont: personalForm.creeazaCont,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) { alert(`Eroare: ${json.error}`); setPersonalLoading(false); return; }
+      addLog(`Angajat nou: ${personalForm.nume} (${personalForm.locatieId===2?'CTA':'PLO'})`);
+      setPersonalRezultat({
+        email: json.credentiale?.email || '—', parola: json.credentiale?.parola || '—',
+        mesaj: `${personalForm.nume} a fost adăugat cu succes.`,
+      });
+      incarcaTotul();
+    } catch (err: any) {
+      alert(`Eroare: ${err.message}`);
+    }
+    setPersonalLoading(false);
+  }, [personalForm, addLog, incarcaTotul]);
+
+  const inlocuiesteAngajat = useCallback(async () => {
+    if (!personalTarget?.uuid) return;
+    setPersonalLoading(true);
+    setPersonalRezultat(null);
+    try {
+      const res = await fetch('/api/personal', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actiune: 'inlocuieste', id_vechi: personalTarget.uuid,
+          nume_nou: personalForm.nume, creeaza_cont: personalForm.creeazaCont,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) { alert(`Eroare: ${json.error}`); setPersonalLoading(false); return; }
+      addLog(`Înlocuire: ${personalTarget.nume} → ${personalForm.nume}, aceeași poziție în rotație`);
+      setPersonalRezultat({
+        email: json.credentiale?.email || '—', parola: json.credentiale?.parola || '—',
+        mesaj: `${personalTarget.nume} a fost dezactivat, ${personalForm.nume} preia aceeași poziție din rotație.`,
+      });
+      incarcaTotul();
+    } catch (err: any) {
+      alert(`Eroare: ${err.message}`);
+    }
+    setPersonalLoading(false);
+  }, [personalTarget, personalForm, addLog, incarcaTotul]);
+
+  const dezactiveazaAngajat = useCallback(async (angajat: Angajat) => {
+    if (!angajat.uuid) return;
+    if (!confirm(`Sigur dezactivezi ${angajat.nume}? Rămâne în istoric, dar dispare din echipă și nu se mai poate loga.`)) return;
+    try {
+      const res = await fetch('/api/personal', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actiune: 'dezactiveaza', id: angajat.uuid }),
+      });
+      const json = await res.json();
+      if (!res.ok) { alert(`Eroare: ${json.error}`); return; }
+      addLog(`Angajat dezactivat: ${angajat.nume}`);
+      incarcaTotul();
+    } catch (err: any) {
+      alert(`Eroare: ${err.message}`);
+    }
+  }, [addLog, incarcaTotul]);
+
   const adaugaCertificat = useCallback(async (angajat: Angajat, nume: string, dataExpirare: string) => {
     if (!angajat.uuid || !nume.trim()) return;
     try {
@@ -2839,6 +2914,9 @@ export default function RotaFlow() {
                     </button>
                     <button onClick={()=>{ setShowMatrice(true); setShowMeniuPrincipal(false); }} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-teal-300 hover:bg-white/[0.06] transition-all text-left">
                       <Scale size={14}/> Matrice
+                    </button>
+                    <button onClick={()=>{ setShowPersonal(true); setPersonalMod('lista'); setPersonalRezultat(null); setShowMeniuPrincipal(false); }} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-cyan-300 hover:bg-white/[0.06] transition-all text-left">
+                      <Plus size={14}/> Personal
                     </button>
                     <button onClick={()=>{ setShowCertificari(true); setShowMeniuPrincipal(false); }} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-orange-300 hover:bg-white/[0.06] transition-all text-left">
                       <HeartPulse size={14}/> Certificări
@@ -4138,6 +4216,135 @@ export default function RotaFlow() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Modal Personal — adauga / inlocuieste / dezactiveaza ── */}
+        {showPersonal && (
+          <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 no-print" onClick={()=>setShowPersonal(false)}>
+            <div className="bg-[#2c2c2e] border border-white/10 rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden shadow-2xl" onClick={e=>e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.08] flex-shrink-0">
+                <span className="font-bold text-[14px]">
+                  {personalMod==='lista' ? 'Personal' : personalMod==='adauga' ? 'Angajat nou' : `Înlocuiește pe ${personalTarget?.nume}`}
+                </span>
+                <button onClick={()=>setShowPersonal(false)} className="w-7 h-7 flex items-center justify-center bg-white/[0.07] hover:bg-white/10 text-zinc-400 rounded-md"><X size={14}/></button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-5">
+                {personalRezultat && (
+                  <div className="bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-4 mb-4">
+                    <p className="text-[12px] font-bold text-emerald-300 mb-2">✓ {personalRezultat.mesaj}</p>
+                    {personalRezultat.email !== '—' && (
+                      <p className="text-[11px] text-emerald-400/80">
+                        Login: <b>{personalRezultat.email}</b> — parolă: <b>{personalRezultat.parola}</b>
+                      </p>
+                    )}
+                    <button onClick={()=>{ setPersonalRezultat(null); setPersonalMod('lista'); }} className="mt-3 text-[11px] font-semibold text-emerald-300 underline">
+                      Înapoi la listă
+                    </button>
+                  </div>
+                )}
+
+                {personalMod==='lista' && !personalRezultat && (
+                  <>
+                    <button onClick={()=>{ setPersonalMod('adauga'); setPersonalForm({nume:'',locatieId:1,tip:'fix',dataStartCiclu:'',creeazaCont:true}); }}
+                      className="w-full flex items-center justify-center gap-2 bg-cyan-900/40 border border-cyan-500/30 text-cyan-300 text-[12px] font-semibold py-2.5 rounded-lg hover:bg-cyan-800/50 transition-all mb-4">
+                      <Plus size={14}/> Adaugă angajat nou
+                    </button>
+                    <div className="space-y-2">
+                      {echipa.filter(m=>m.id!==999).map(m => (
+                        <div key={m.id} className="flex items-center justify-between bg-white/[0.03] border border-white/[0.06] rounded-lg px-3 py-2.5">
+                          <div>
+                            <span className="text-[12px] font-semibold text-zinc-200">{m.nume}</span>
+                            <span className="text-[10px] text-zinc-500 ml-2">{isCTA(m) ? (m.tip==='runner'?'CTA · runner':'CTA · fix') : 'PLO'}</span>
+                          </div>
+                          <div className="flex gap-1.5">
+                            <button onClick={()=>{ setPersonalTarget(m); setPersonalMod('inlocuieste'); setPersonalForm({nume:'',locatieId:m.locatieId??1,tip:m.tip??'fix',dataStartCiclu:'',creeazaCont:true}); }}
+                              className="text-[10px] font-semibold px-2.5 py-1.5 rounded-lg bg-amber-900/40 border border-amber-500/30 text-amber-300 hover:bg-amber-800/50 transition-all">
+                              Înlocuiește
+                            </button>
+                            <button onClick={()=>dezactiveazaAngajat(m)}
+                              className="text-[10px] font-semibold px-2.5 py-1.5 rounded-lg bg-red-900/30 border border-red-500/25 text-red-300 hover:bg-red-800/40 transition-all">
+                              Dezactivează
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {personalMod==='adauga' && !personalRezultat && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wide">Nume complet</label>
+                      <input type="text" value={personalForm.nume} onChange={e=>setPersonalForm(p=>({...p,nume:e.target.value}))}
+                        placeholder="ex. Ion Popescu"
+                        className="w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-cyan-500/50 mt-1"/>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wide">Locație</label>
+                      <div className="flex gap-2 mt-1">
+                        <button onClick={()=>setPersonalForm(p=>({...p,locatieId:1}))} className={`flex-1 py-2 rounded-lg text-[12px] font-semibold border ${personalForm.locatieId===1?'bg-sky-900/50 border-sky-500/40 text-sky-300':'bg-white/[0.03] border-white/[0.08] text-zinc-400'}`}>🏭 PLO</button>
+                        <button onClick={()=>setPersonalForm(p=>({...p,locatieId:2}))} className={`flex-1 py-2 rounded-lg text-[12px] font-semibold border ${personalForm.locatieId===2?'bg-amber-900/50 border-amber-500/40 text-amber-300':'bg-white/[0.03] border-white/[0.08] text-zinc-400'}`}>⚓ CTA</button>
+                      </div>
+                    </div>
+                    {personalForm.locatieId===2 && (
+                      <>
+                        <div>
+                          <label className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wide">Tip</label>
+                          <div className="flex gap-2 mt-1">
+                            <button onClick={()=>setPersonalForm(p=>({...p,tip:'fix'}))} className={`flex-1 py-2 rounded-lg text-[12px] font-semibold border ${personalForm.tip==='fix'?'bg-amber-900/50 border-amber-500/40 text-amber-300':'bg-white/[0.03] border-white/[0.08] text-zinc-400'}`}>Fix (ciclu Z/N)</button>
+                            <button onClick={()=>setPersonalForm(p=>({...p,tip:'runner'}))} className={`flex-1 py-2 rounded-lg text-[12px] font-semibold border ${personalForm.tip==='runner'?'bg-orange-900/50 border-orange-500/40 text-orange-300':'bg-white/[0.03] border-white/[0.08] text-zinc-400'}`}>Runner</button>
+                          </div>
+                        </div>
+                        {personalForm.tip==='fix' && (
+                          <div>
+                            <label className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wide">Dată start ciclu (ancorare Z/N/L/L)</label>
+                            <input type="date" value={personalForm.dataStartCiclu} onChange={e=>setPersonalForm(p=>({...p,dataStartCiclu:e.target.value}))}
+                              className="w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-amber-500/50 mt-1"/>
+                            <p className="text-[9px] text-zinc-600 mt-1">⚠ Verifică în Matrice că nu se suprapune cu faza altui coleg fix.</p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    <label className="flex items-center gap-2 mt-2">
+                      <input type="checkbox" checked={personalForm.creeazaCont} onChange={e=>setPersonalForm(p=>({...p,creeazaCont:e.target.checked}))}/>
+                      <span className="text-[11px] text-zinc-400">Creează automat cont de login (email + parolă)</span>
+                    </label>
+                    <button onClick={adaugaAngajatNou} disabled={!personalForm.nume.trim() || personalLoading}
+                      className="w-full bg-cyan-900/50 border border-cyan-500/40 text-cyan-300 text-[12px] font-semibold py-2.5 rounded-lg hover:bg-cyan-800/60 transition-all disabled:opacity-40 mt-2">
+                      {personalLoading ? 'Se salvează...' : 'Adaugă angajat'}
+                    </button>
+                    <button onClick={()=>setPersonalMod('lista')} className="w-full text-[11px] text-zinc-500 py-1">← Înapoi</button>
+                  </div>
+                )}
+
+                {personalMod==='inlocuieste' && personalTarget && !personalRezultat && (
+                  <div className="space-y-3">
+                    <div className="bg-amber-950/20 border border-amber-500/20 rounded-lg p-3 text-[11px] text-amber-300/90">
+                      Preia automat: aceeași poziție din rotație, aceeași locație ({isCTA(personalTarget)?'CTA':'PLO'}){isCTA(personalTarget)&&personalTarget.dataStartCiclu?`, aceeași fază de ciclu (${personalTarget.dataStartCiclu})`:''}.
+                      {personalTarget.nume} rămâne în istoric, dar dispare din echipă și nu se mai poate loga.
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wide">Numele noului angajat</label>
+                      <input type="text" value={personalForm.nume} onChange={e=>setPersonalForm(p=>({...p,nume:e.target.value}))}
+                        placeholder="ex. Ion Popescu"
+                        className="w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-amber-500/50 mt-1"/>
+                    </div>
+                    <label className="flex items-center gap-2 mt-2">
+                      <input type="checkbox" checked={personalForm.creeazaCont} onChange={e=>setPersonalForm(p=>({...p,creeazaCont:e.target.checked}))}/>
+                      <span className="text-[11px] text-zinc-400">Creează automat cont de login (email + parolă)</span>
+                    </label>
+                    <button onClick={inlocuiesteAngajat} disabled={!personalForm.nume.trim() || personalLoading}
+                      className="w-full bg-amber-900/50 border border-amber-500/40 text-amber-300 text-[12px] font-semibold py-2.5 rounded-lg hover:bg-amber-800/60 transition-all disabled:opacity-40 mt-2">
+                      {personalLoading ? 'Se salvează...' : `Înlocuiește pe ${personalTarget.nume}`}
+                    </button>
+                    <button onClick={()=>setPersonalMod('lista')} className="w-full text-[11px] text-zinc-500 py-1">← Înapoi</button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
