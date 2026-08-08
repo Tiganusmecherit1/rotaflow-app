@@ -973,6 +973,12 @@ export default function RotaFlow() {
   const [deplasarePopup, setDeplasarePopup] = useState<{ angajat: Angajat; texte: Record<string,string> } | null>(null);
   // Note de predare tura — un rand per (angajat, zi)
   const [noteTura, setNoteTura] = useState<{id:string;angajat_id:string;data:string;text:string;creat_la:string}[]>([]);
+  const [certificari, setCertificari] = useState<{id:string;angajat_id:string;nume_certificat:string;data_obtinere:string|null;data_expirare:string|null;note:string|null}[]>([]);
+  const [showCertificari, setShowCertificari] = useState(false);
+  const [certNouForm, setCertNouForm] = useState<Record<string,{nume:string;dataExpirare:string}>>({});
+  const [cautareCert, setCautareCert] = useState('');
+  const [showAnalizaTermenLung, setShowAnalizaTermenLung] = useState(false);
+  const [analizaLunile, setAnalizaLunile] = useState(6);
   const [notaPopup, setNotaPopup] = useState<{ angajat: Angajat; dStr: string; text: string } | null>(null);
   // Selectie multipla — celuleSelectate = "angajatId_dataStr", pentru actiuni in masa
   const [modSelectieMultipla, setModSelectieMultipla] = useState(false);
@@ -1207,6 +1213,9 @@ export default function RotaFlow() {
       // Note de predare tura — ultimele 30 de zile
       const acum30zile = fmtDateInput(new Date(Date.now() - 30*86400000));
       fetch(`/api/note-tura?de=${acum30zile}`).then(r=>r.ok?r.json():null).then(json => { if (json?.note) setNoteTura(json.note); }).catch(()=>{});
+
+      // Certificari / calificari
+      fetch('/api/certificari').then(r=>r.ok?r.json():null).then(json => { if (json?.certificari) setCertificari(json.certificari); }).catch(()=>{});
 
       const logAdaptat: LogEntry[] = sbIstoric.map(l => ({
         ts: new Date(l.created_at).toLocaleDateString('ro-RO', { day:'2-digit', month:'2-digit', year:'numeric' }) + ' ' + new Date(l.created_at).toLocaleTimeString('ro-RO', { hour:'2-digit', minute:'2-digit' }),
@@ -1743,6 +1752,33 @@ export default function RotaFlow() {
   // zilele unde omul e efectiv la Birou (sau are deja o deplasare acolo), ca sa
   // nu suprascriem niciodata o tura reala Z/N.
   // Salveaza (sau actualizeaza) nota de predare pentru un angajat, intr-o zi anume
+  const adaugaCertificat = useCallback(async (angajat: Angajat, nume: string, dataExpirare: string) => {
+    if (!angajat.uuid || !nume.trim()) return;
+    try {
+      const res = await fetch('/api/certificari', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ angajat_id: angajat.uuid, nume_certificat: nume.trim(), data_expirare: dataExpirare || null }),
+      });
+      const json = await res.json();
+      if (res.ok && json.certificat) {
+        setCertificari(prev => [...prev, json.certificat]);
+        addLog(`Certificat adăugat: ${angajat.nume} — ${nume.trim()}`);
+        setCertNouForm(prev => ({ ...prev, [angajat.id]: { nume: '', dataExpirare: '' } }));
+      } else {
+        alert(`Nu am putut salva certificatul: ${json.error || 'eroare necunoscută'}`);
+      }
+    } catch (err) {
+      console.error('Eroare adaugare certificat:', err);
+    }
+  }, [addLog]);
+
+  const stergeCertificat = useCallback(async (id: string, label: string) => {
+    if (!confirm(`Sigur vrei să ștergi certificatul "${label}"?`)) return;
+    setCertificari(prev => prev.filter(c => c.id !== id));
+    fetch(`/api/certificari?id=${id}`, { method: 'DELETE' }).catch(()=>{});
+    addLog(`Certificat șters: ${label}`);
+  }, [addLog]);
+
   const salveazaNota = useCallback(async (angajat: Angajat, dStr: string, text: string) => {
     if (!angajat.uuid) return;
     if (!text.trim()) {
@@ -2822,6 +2858,12 @@ export default function RotaFlow() {
             <button onClick={()=>setShowMatrice(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-900/40 border border-teal-500/30 text-teal-300 text-[12px] font-semibold hover:bg-teal-800/50 transition-all">
               <Scale size={13}/> Matrice
             </button>
+            <button onClick={()=>setShowCertificari(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-900/40 border border-orange-500/30 text-orange-300 text-[12px] font-semibold hover:bg-orange-800/50 transition-all">
+              <HeartPulse size={13}/> Certificări
+            </button>
+            <button onClick={()=>setShowAnalizaTermenLung(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-900/40 border border-violet-500/30 text-violet-300 text-[12px] font-semibold hover:bg-violet-800/50 transition-all">
+              <Trophy size={13}/> Analiză
+            </button>
             <button onClick={()=>{ setModSelectieMultipla(p=>!p); setCeluleSelectate(new Set()); }} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] font-semibold transition-all ${modSelectieMultipla?'bg-sky-900/50 border-sky-500/50 text-sky-300':'bg-zinc-800 border-zinc-600 text-zinc-300 hover:bg-zinc-700'}`}>
               <Check size={13}/> {modSelectieMultipla?'Ieși din selecție':'Selectare multiplă'}
             </button>
@@ -2894,6 +2936,31 @@ export default function RotaFlow() {
                 </div>
                 <button onClick={()=>setShowCO(true)} className="flex-shrink-0 text-[10px] font-semibold px-2.5 py-1.5 rounded-lg bg-amber-900/50 border border-amber-500/40 text-amber-200 hover:bg-amber-800/60 transition-all whitespace-nowrap">
                   Planifică →
+                </button>
+              </div>
+            );
+          })()}
+
+          {/* Avertizare: certificari/calificari care expira curand */}
+          {(() => {
+            const azi = fmtDateInput(new Date());
+            const in60zile = fmtDateInput(new Date(Date.now()+60*86400000));
+            const cuExpirare = certificari.filter(c => c.data_expirare && c.data_expirare >= azi && c.data_expirare < in60zile);
+            if (cuExpirare.length === 0) return null;
+            return (
+              <div className="bg-orange-950/30 border border-orange-500/30 rounded-xl p-3.5 flex items-center gap-3 no-print">
+                <AlertTriangle size={18} className="text-orange-400 flex-shrink-0"/>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[12px] font-bold text-orange-300">Certificări/calificări pe cale să expire</p>
+                  <p className="text-[11px] text-orange-400/80">
+                    {cuExpirare.map(c => {
+                      const ang = echipa.find(m=>m.uuid===c.angajat_id);
+                      return `${ang?.nume ?? '?'}: ${c.nume_certificat} (exp. ${fmtDate(parseD(c.data_expirare!))})`;
+                    }).join(' · ')}
+                  </p>
+                </div>
+                <button onClick={()=>setShowCertificari(true)} className="flex-shrink-0 text-[10px] font-semibold px-2.5 py-1.5 rounded-lg bg-orange-900/50 border border-orange-500/40 text-orange-200 hover:bg-orange-800/60 transition-all whitespace-nowrap">
+                  Vezi →
                 </button>
               </div>
             );
@@ -4049,6 +4116,157 @@ export default function RotaFlow() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Modal Certificări / calificări ── */}
+        {showCertificari && (
+          <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 no-print" onClick={()=>setShowCertificari(false)}>
+            <div className="bg-[#2c2c2e] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl" onClick={e=>e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.08] flex-shrink-0">
+                <span className="font-bold text-[14px]">Certificări / calificări</span>
+                <button onClick={()=>setShowCertificari(false)} className="w-7 h-7 flex items-center justify-center bg-white/[0.07] hover:bg-white/10 text-zinc-400 rounded-md"><X size={14}/></button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                <input
+                  type="text"
+                  value={cautareCert}
+                  onChange={e=>setCautareCert(e.target.value)}
+                  placeholder="Caută după nume..."
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-orange-500/50 transition-all"
+                />
+                {echipa.filter(m => m.nume.toLowerCase().includes(cautareCert.toLowerCase())).map(m => {
+                  const certificatele = certificari.filter(c => c.angajat_id === m.uuid);
+                  const azi = fmtDateInput(new Date());
+                  const formCurent = certNouForm[m.id] ?? { nume: '', dataExpirare: '' };
+                  return (
+                    <div key={m.id} className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3">
+                      <p className="font-bold text-[13px] text-zinc-200 mb-2">{m.nume}</p>
+                      {certificatele.length > 0 && (
+                        <div className="space-y-1.5 mb-3">
+                          {certificatele.map(c => {
+                            const expirat = c.data_expirare && c.data_expirare < azi;
+                            const expiraCurand = c.data_expirare && !expirat && c.data_expirare < fmtDateInput(new Date(Date.now()+60*86400000));
+                            return (
+                              <div key={c.id} className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] ${expirat?'bg-red-950/30 border border-red-500/20':expiraCurand?'bg-amber-950/30 border border-amber-500/20':'bg-white/[0.02]'}`}>
+                                <span className={expirat?'text-red-300':expiraCurand?'text-amber-300':'text-zinc-300'}>
+                                  {c.nume_certificat}{c.data_expirare && ` — exp. ${fmtDate(parseD(c.data_expirare))}`}{expirat?' (EXPIRAT)':''}
+                                </span>
+                                <button onClick={()=>stergeCertificat(c.id, c.nume_certificat)} className="text-zinc-500 hover:text-red-400 flex-shrink-0 ml-2">✕</button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <input type="text" placeholder="ex. High Voltage, ADR, etc." value={formCurent.nume}
+                          onChange={e=>setCertNouForm(prev=>({...prev, [m.id]: {...formCurent, nume: e.target.value}}))}
+                          className="flex-1 bg-black/40 border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none focus:border-orange-500/50"/>
+                        <input type="date" value={formCurent.dataExpirare}
+                          onChange={e=>setCertNouForm(prev=>({...prev, [m.id]: {...formCurent, dataExpirare: e.target.value}}))}
+                          className="bg-black/40 border border-white/[0.08] rounded-lg px-2 py-1.5 text-[11px] text-white outline-none focus:border-orange-500/50"/>
+                        <button onClick={()=>adaugaCertificat(m, formCurent.nume, formCurent.dataExpirare)}
+                          disabled={!formCurent.nume.trim()}
+                          className="flex-shrink-0 bg-orange-900/50 border border-orange-500/40 text-orange-300 text-[11px] font-semibold px-3 py-1.5 rounded-lg hover:bg-orange-800/60 transition-all disabled:opacity-30">
+                          + Adaugă
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Modal Analiză Termen Lung ── */}
+        {showAnalizaTermenLung && (
+          <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 no-print" onClick={()=>setShowAnalizaTermenLung(false)}>
+            <div className="bg-[#2c2c2e] border border-white/10 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl" onClick={e=>e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.08] flex-shrink-0">
+                <div>
+                  <span className="font-bold text-[14px]">Analiză Termen Lung — {locatieActiva}</span>
+                  <p className="text-[10px] text-zinc-500 mt-0.5">Tendințe pe ultimele luni, nu doar luna curentă</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <select value={analizaLunile} onChange={e=>setAnalizaLunile(Number(e.target.value))}
+                    className="bg-[#1c1c1e] border border-white/10 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-zinc-300 outline-none cursor-pointer">
+                    <option value={3}>Ultimele 3 luni</option>
+                    <option value={6}>Ultimele 6 luni</option>
+                    <option value={12}>Ultimele 12 luni</option>
+                  </select>
+                  <button onClick={()=>setShowAnalizaTermenLung(false)} className="w-7 h-7 flex items-center justify-center bg-white/[0.07] hover:bg-white/10 text-zinc-400 rounded-md"><X size={14}/></button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-5">
+                {(() => {
+                  const echipaAnaliza = locatieActiva === 'CTA' ? toataEchipaCTA.filter(m=>m.tip!=='runner') : echipaPLO;
+                  const azi = new Date();
+                  const dataStart = new Date(azi.getFullYear(), azi.getMonth() - analizaLunile, 1);
+                  const dataEnd = new Date(azi.getFullYear(), azi.getMonth(), 0);
+
+                  const randuri = echipaAnaliza.map(m => {
+                    let oreTotale = 0, zileCM = 0, zileCOfolosite = 0;
+                    const oreSaptamana: Record<string, number> = {};
+                    const zileCOPeLuna: Record<number, number> = {};
+
+                    for (let d = new Date(dataStart); d <= dataEnd; d = new Date(d.getTime()+86400000)) {
+                      const t = getTuraW(d, m);
+                      const oreZiua = (t.type==='Z'||t.type==='N') ? 12 : (['D','S','R','B','PLO','DISP'].includes(t.type) ? 8 : 0);
+                      if (oreZiua > 0) {
+                        oreTotale += oreZiua;
+                        const luniStr = fmtDateInput(getMonday(d));
+                        oreSaptamana[luniStr] = (oreSaptamana[luniStr] ?? 0) + oreZiua;
+                      } else if (t.type === 'CM') zileCM++;
+                      else if (t.type === 'CO') {
+                        zileCOfolosite++;
+                        zileCOPeLuna[d.getMonth()] = (zileCOPeLuna[d.getMonth()] ?? 0) + 1;
+                      }
+                    }
+
+                    const saptamani = Object.values(oreSaptamana);
+                    const saptamaniLa48 = saptamani.filter(o => o >= 48).length;
+                    const mediaOreSapt = saptamani.length > 0 ? Math.round(oreTotale / saptamani.length) : 0;
+                    const lunaFrecventaCO = Object.entries(zileCOPeLuna).sort((a,b)=>b[1]-a[1])[0];
+                    const NUME_LUNI = ['Ian','Feb','Mar','Apr','Mai','Iun','Iul','Aug','Sep','Oct','Nov','Dec'];
+
+                    return {
+                      nume: m.nume, oreTotale, mediaOreSapt, saptamaniLa48, zileCM, zileCOfolosite,
+                      lunaFrecventaCO: lunaFrecventaCO ? `${NUME_LUNI[Number(lunaFrecventaCO[0])]} (${lunaFrecventaCO[1]}z)` : '—',
+                    };
+                  });
+
+                  return (
+                    <table className="w-full text-[12px]">
+                      <thead>
+                        <tr className="text-left text-[10px] text-zinc-500 uppercase tracking-wider border-b border-white/[0.08]">
+                          <th className="pb-2 font-semibold">Angajat</th>
+                          <th className="pb-2 font-semibold text-center">Ore totale</th>
+                          <th className="pb-2 font-semibold text-center">Medie ore/săpt.</th>
+                          <th className="pb-2 font-semibold text-center">Săpt. la 48h</th>
+                          <th className="pb-2 font-semibold text-center">Zile CM</th>
+                          <th className="pb-2 font-semibold text-center">Zile CO folosite</th>
+                          <th className="pb-2 font-semibold">Luna preferată de CO</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {randuri.sort((a,b)=>b.saptamaniLa48-a.saptamaniLa48).map((r,i) => (
+                          <tr key={i} className="border-b border-white/[0.04]">
+                            <td className="py-2.5 font-semibold text-zinc-200">{r.nume}</td>
+                            <td className="py-2.5 text-center text-zinc-400">{r.oreTotale}h</td>
+                            <td className="py-2.5 text-center text-zinc-400">{r.mediaOreSapt}h</td>
+                            <td className={`py-2.5 text-center font-bold ${r.saptamaniLa48>4?'text-red-400':r.saptamaniLa48>0?'text-amber-400':'text-zinc-500'}`}>{r.saptamaniLa48}</td>
+                            <td className={`py-2.5 text-center ${r.zileCM>10?'text-orange-400 font-bold':'text-zinc-400'}`}>{r.zileCM}</td>
+                            <td className="py-2.5 text-center text-zinc-400">{r.zileCOfolosite}</td>
+                            <td className="py-2.5 text-zinc-500">{r.lunaFrecventaCO}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  );
+                })()}
               </div>
             </div>
           </div>
