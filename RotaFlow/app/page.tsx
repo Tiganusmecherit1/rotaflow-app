@@ -196,8 +196,11 @@ function inCO(d: Date, m: Angajat): boolean {
     })) return true;
   }
 
-  // Verificare "punte" - daca data e exact 1 zi intre sfarsitul unui concediu si inceputul altuia
-  // (sloturi adiacente, ex: 06-10 Apr + 13-17 Apr -> 11-12 Apr tratat ca CO, fara cost suplimentar)
+  // Verificare "punte" - daca data e exact 1-2 zile intre sfarsitul unui concediu si
+  // inceputul altuia (sloturi adiacente, ex: 06-10 Apr + 13-17 Apr -> 11-12 Apr tratat ca CO,
+  // fara cost suplimentar). IMPORTANT: limitat strict la maxim 2 zile — altfel, intre doua
+  // concedii separate, distantate (ex. recuperare de zile din ani anteriori, in sloturi
+  // raspandite peste an), TOT intervalul dintre ele era tratat gresit ca "tot in concediu".
   return m.concedii.some(c1 => m.concedii.some(c2 => {
     if (c1 === c2) return false;
     const e1 = parseD(c1.e);
@@ -205,7 +208,8 @@ function inCO(d: Date, m: Angajat): boolean {
     const gapStart = new Date(e1.getTime() + 86400000);
     const gapEnd = new Date(s2.getTime() - 86400000);
     if (gapStart.getTime() > gapEnd.getTime()) return false;
-    // gap poate fi 1-2 zile (Sambata+Duminica intre 2 sloturi consecutive)
+    const lungimeGol = Math.round((gapEnd.getTime() - gapStart.getTime()) / 86400000) + 1;
+    if (lungimeGol > 2) return false; // punte doar pentru goluri de maxim 2 zile (weekend intre sloturi)
     let check = new Date(gapStart); 
     while (check <= gapEnd) {
       if (check.toDateString() === d.toDateString()) return true;
@@ -508,13 +512,21 @@ function getTuraRawInner(d: Date, m: Angajat, toataEchipa: Angajat[], suplinitor
 
   const swA = swapuri.find(sw => sw.aId===m.id && sw.aData===dStr);
   const swB = swapuri.find(sw => sw.bId===m.id && sw.bData===dStr);
+  const turaPentruSwap = (dataStr: string, persoana: Angajat) => {
+    const d = parseD(dataStr);
+    if (isCTA(persoana) && persoana.dataStartCiclu && persoana.tip !== 'runner') {
+      const tura = getTuraCTA(d, persoana.dataStartCiclu);
+      return { type: tura, label: tura };
+    }
+    return getTuraBaza(d, persoana, toataEchipa, suplinitorActiv, oreAcumulate);
+  };
   if (swA) {
     const b = toataEchipa.find(x => x.id===swA.bId);
-    if (b) { const t=getTuraBaza(parseD(swA.bData),b,toataEchipa,suplinitorActiv,oreAcumulate); if (t.type==='D'||t.type==='S') return {...t,label:t.label+'↔',swapped:true}; }
+    if (b) { const t=turaPentruSwap(swA.bData,b); if (t.type==='D'||t.type==='S'||t.type==='Z'||t.type==='N') return {...t,label:t.label+'↔',swapped:true}; }
   }
   if (swB) {
     const a = toataEchipa.find(x => x.id===swB.aId);
-    if (a) { const t=getTuraBaza(parseD(swB.aData),a,toataEchipa,suplinitorActiv,oreAcumulate); if (t.type==='D'||t.type==='S') return {...t,label:t.label+'↔',swapped:true}; }
+    if (a) { const t=turaPentruSwap(swB.aData,a); if (t.type==='D'||t.type==='S'||t.type==='Z'||t.type==='N') return {...t,label:t.label+'↔',swapped:true}; }
   }
 
   // CTA — algoritm 12h bazat pe data_start_ciclu (doar angajati fix, nu runneri nealocati)
