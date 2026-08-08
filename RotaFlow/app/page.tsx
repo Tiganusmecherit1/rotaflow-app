@@ -974,6 +974,9 @@ export default function RotaFlow() {
   // Note de predare tura — un rand per (angajat, zi)
   const [noteTura, setNoteTura] = useState<{id:string;angajat_id:string;data:string;text:string;creat_la:string}[]>([]);
   const [notaPopup, setNotaPopup] = useState<{ angajat: Angajat; dStr: string; text: string } | null>(null);
+  // Selectie multipla — celuleSelectate = "angajatId_dataStr", pentru actiuni in masa
+  const [modSelectieMultipla, setModSelectieMultipla] = useState(false);
+  const [celuleSelectate, setCeluleSelectate] = useState<Set<string>>(new Set());
   // Runner asignat per concediu CTA: cheie = "angajatId_dataStart"
   const [runnerAsignat, setRunnerAsignat] = useState<Record<string, number|null>>({});
   // Stocheaza: runnerId → { dataStart, perioadaStart, perioadaSfarsit }
@@ -1156,6 +1159,9 @@ export default function RotaFlow() {
   const [swNota, setSwNota] = useState('');
   const [lunaOffset, setLunaOffset] = useState(0);
   const [showPdfPicker, setShowPdfPicker] = useState(false);
+  const [showConformitatePicker, setShowConformitatePicker] = useState(false);
+  const [conformitateStart, setConformitateStart] = useState(() => fmtDateInput(new Date(Date.now() - 90*86400000)));
+  const [conformitateEnd, setConformitateEnd] = useState(() => fmtDateInput(new Date()));
   const [pdfLunaDate, setPdfLunaDate] = useState(() => {
     const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   });
@@ -1765,6 +1771,28 @@ export default function RotaFlow() {
     setNotaPopup(null);
   }, [noteTura, addLog]);
 
+  // Aplica un tip de tura pe toate celulele selectate deodata (actiune in masa)
+  const aplicaInMasa = useCallback((tip: string) => {
+    const expiraLa = fmtDateInput(new Date(Date.now() + 365 * 86400000));
+    const noi: TuraOverride[] = Array.from(celuleSelectate).map(cheie => {
+      const [idStr, dataStr] = cheie.split('_');
+      return { id: `drag_${idStr}_${dataStr}`, angajatId: Number(idStr), data: dataStr, tura: tip, expiraLa };
+    });
+    setTuraOverride(prev => [...prev.filter(o => !noi.some(n => n.id === o.id)), ...noi]);
+    addLog(`Aplicat "${tip}" pe ${celuleSelectate.size} celule selectate`);
+    setCeluleSelectate(new Set());
+  }, [celuleSelectate, addLog]);
+
+  const stergeInMasa = useCallback(() => {
+    const idsDeSters = new Set(Array.from(celuleSelectate).map(cheie => {
+      const [idStr, dataStr] = cheie.split('_');
+      return `drag_${idStr}_${dataStr}`;
+    }));
+    setTuraOverride(prev => prev.filter(o => !idsDeSters.has(o.id)));
+    addLog(`Șterse override-urile pentru ${celuleSelectate.size} celule selectate`);
+    setCeluleSelectate(new Set());
+  }, [celuleSelectate, addLog]);
+
   const salveazaDeplasari = useCallback(() => {
     if (!deplasarePopup) return;
     const { angajat, texte } = deplasarePopup;
@@ -2325,6 +2353,135 @@ export default function RotaFlow() {
     addLog(`PDF exportat: ${luna} — ${isCTAView?'CTA':'PLO'}`);
   };
 
+  // ─── Export CSV, gata de payroll — un rand per angajat, ore defalcate zi/noapte,
+  // gata de import in Excel sau software de contabilitate ───
+  const exportaCSVPayroll = (lunaRef?: Date) => {
+    const refDate = lunaRef ?? lunaStart;
+    const luna = fmtMonth(refDate);
+    const echipaPDF = locatieActiva === 'CTA' ? toataEchipaCTA : echipaPLO;
+    const yr = refDate.getFullYear(), mo = refDate.getMonth();
+    const start = new Date(yr, mo, 1), end = new Date(yr, mo + 1, 0);
+
+    const linii: string[] = [];
+    linii.push(['Nume', 'Zile lucrate', 'Ore zi', 'Ore noapte', 'Ore total', 'Zile weekend lucrate', 'Sărbători lucrate', 'Zile CO', 'Zile CM', 'Zile AN', 'CO rămas', 'CO reportat'].join(';'));
+
+    echipaPDF.forEach(m => {
+      let oreZi = 0, oreNoapte = 0, zileLucrate = 0, weekendLucrate = 0, sarbLucrate = 0, zileCM = 0, zileAN = 0;
+      for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
+        const t = getTuraW(d, m);
+        const esteZiTip = t.type === 'D' || t.type === 'Z';
+        const esteNoapteTip = t.type === 'S' || t.type === 'N';
+        if (esteZiTip || esteNoapteTip || t.type === 'R' || t.type === 'B' || t.type === 'PLO' || t.type === 'DISP') {
+          zileLucrate++;
+          const oreZiua = (t.type === 'Z' || t.type === 'N') ? 12 : 8;
+          if (esteNoapteTip) oreNoapte += oreZiua; else oreZi += oreZiua;
+          if (d.getDay() === 0 || d.getDay() === 6) weekendLucrate++;
+          if (isSarbatoare(d)) sarbLucrate++;
+        } else if (t.type === 'CM') zileCM++;
+        else if (t.type === 'AN') zileAN++;
+      }
+      const randCSV = [
+        faraDiacritice(m.nume), zileLucrate, oreZi, oreNoapte, oreZi + oreNoapte,
+        weekendLucrate, sarbLucrate,
+        m.concedii.filter(c => { const s = parseD(c.s); return s >= start && s <= end; }).length,
+        zileCM, zileAN, m.zileCO, m.zileCOReportate ?? 0,
+      ].join(';');
+      linii.push(randCSV);
+    });
+
+    const csvContent = '\uFEFF' + linii.join('\r\n'); // BOM pentru diacritice corecte in Excel
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `RotaFlow_Payroll_${locatieActiva}_${luna.replace(' ', '_')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    addLog(`CSV payroll exportat: ${luna} — ${locatieActiva}`);
+  };
+
+  // ─── Raport Conformitate — dovada documentata pentru inspectia muncii ───
+  // Verifica direct programul REAL (ce arata aplicatia, nu o simulare) pe o perioada
+  // aleasa: ore saptamanale, zile consecutive, respectarea S->D. Motorul deja PREVINE
+  // structural incalcarile (verificarea universala din getTura), deci raportul confirma
+  // si documenteaza conformitatea, nu doar cauta probleme.
+  const generateRaportConformitate = (dataStart: Date, dataEnd: Date) => {
+    const doc = new jsPDF({ orientation: 'landscape' });
+    const echipaVerif = locatieActiva === 'CTA' ? toataEchipaCTA.filter(m => m.tip !== 'runner') : echipaPLO;
+
+    type RandRaport = { nume: string; saptamaniTotale: number; saptamaniLa48h: number; maxConsecutive: number; violariSD: number; violari6zile: number; violari48h: number };
+    const randuri: RandRaport[] = [];
+    let totalViolari = 0;
+
+    echipaVerif.forEach(m => {
+      let maxConsecutive = 0, consecutiveCurent = 0, violariSD = 0, violari6zile = 0;
+      let tipIeri: string | null = null;
+      const oreSaptamana: Record<string, number> = {};
+
+      for (let d = new Date(dataStart); d <= dataEnd; d = new Date(d.getTime() + 86400000)) {
+        const t = getTuraW(d, m);
+        const esteLucru = ['D', 'S', 'Z', 'N', 'R', 'B', 'PLO', 'DISP'].includes(t.type);
+        if (esteLucru) {
+          consecutiveCurent++;
+          maxConsecutive = Math.max(maxConsecutive, consecutiveCurent);
+          if (consecutiveCurent > 6) violari6zile++;
+          if ((t.type === 'D' || t.type === 'Z') && (tipIeri === 'S' || tipIeri === 'N')) violariSD++;
+          const luniStr = fmtDateInput(getMonday(d));
+          const oreZiua = (t.type === 'Z' || t.type === 'N') ? 12 : 8;
+          oreSaptamana[luniStr] = (oreSaptamana[luniStr] ?? 0) + oreZiua;
+        } else {
+          consecutiveCurent = 0;
+        }
+        tipIeri = t.type;
+      }
+
+      const saptamani = Object.values(oreSaptamana);
+      const violari48h = saptamani.filter(o => o > 48).length;
+      const la48h = saptamani.filter(o => o === 48).length;
+      totalViolari += violariSD + violari6zile + violari48h;
+
+      randuri.push({ nume: m.nume, saptamaniTotale: saptamani.length, saptamaniLa48h: la48h, maxConsecutive, violariSD, violari6zile, violari48h });
+    });
+
+    doc.setFontSize(16); doc.setTextColor(0, 0, 0);
+    doc.text(faraDiacritice('Raport de Conformitate — Legislatia Muncii'), 14, 18);
+    doc.setFontSize(10); doc.setTextColor(100, 100, 100);
+    doc.text(faraDiacritice(`Perioada: ${fmtDate(dataStart)} — ${fmtDate(dataEnd)} · Locatie: ${locatieActiva} · Generat: ${fmtTs(new Date())}`), 14, 25);
+    doc.setFontSize(9);
+    doc.text(faraDiacritice('Verificat: max. 48h/saptamana, max. 6 zile lucratoare consecutive, repaus intre ture (fara tranzitie Seara->Zi imediata).'), 14, 31);
+
+    autoTable(doc, {
+      startY: 37,
+      head: [['Angajat', 'Săptămâni verificate', 'Săpt. la limita 48h', 'Max zile consecutive', 'Încălcări 48h', 'Încălcări 6 zile', 'Încălcări repaus']],
+      body: randuri.map(r => [
+        faraDiacritice(r.nume), r.saptamaniTotale.toString(), r.saptamaniLa48h.toString(), r.maxConsecutive.toString(),
+        r.violari48h.toString(), r.violari6zile.toString(), r.violariSD.toString(),
+      ]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [30, 41, 59] },
+      didParseCell: (data: any) => {
+        if (data.section === 'body' && [4, 5, 6].includes(data.column.index) && Number(data.cell.raw) > 0) {
+          data.cell.styles.fillColor = [254, 226, 226];
+          data.cell.styles.textColor = [153, 27, 27];
+          data.cell.styles.fontStyle = 'bold';
+        }
+      },
+    });
+
+    const finalY = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFontSize(11);
+    if (totalViolari === 0) {
+      doc.setTextColor(21, 128, 61);
+      doc.text(faraDiacritice(`✓ Nicio incalcare gasita — ${echipaVerif.length} angajati, ${randuri.reduce((s,r)=>s+r.saptamaniTotale,0)} saptamani-persoana verificate.`), 14, finalY);
+    } else {
+      doc.setTextColor(185, 28, 28);
+      doc.text(faraDiacritice(`⚠ ${totalViolari} incalcari gasite — vezi randurile marcate mai sus.`), 14, finalY);
+    }
+
+    doc.save(`RotaFlow_Conformitate_${locatieActiva}_${fmtDateInput(dataStart)}_${fmtDateInput(dataEnd)}.pdf`);
+    addLog(`Raport Conformitate generat: ${fmtDate(dataStart)} — ${fmtDate(dataEnd)}, ${locatieActiva}`);
+  };
+
   const generateEchitatePDF = () => {
     const doc = new jsPDF({ orientation: 'landscape' });
     const perioadaLabel = echitatePerioada==='luna' ? 'Luna' : echitatePerioada==='trimestru' ? 'Trimestru' : echitatePerioada==='an' ? 'An' : 'Custom';
@@ -2598,12 +2755,45 @@ export default function RotaFlow() {
                   const [yr, mo] = pdfLunaDate.split('-').map(Number);
                   generatePDF(new Date(yr, mo-1, 1));
                   setShowPdfPicker(false);
-                }} className="w-full bg-emerald-900/50 border border-emerald-500/40 text-emerald-300 text-[12px] font-semibold py-1.5 rounded-lg hover:bg-emerald-800/60 transition-all flex items-center justify-center gap-1.5">
+                }} className="w-full bg-emerald-900/50 border border-emerald-500/40 text-emerald-300 text-[12px] font-semibold py-1.5 rounded-lg hover:bg-emerald-800/60 transition-all flex items-center justify-center gap-1.5 mb-2">
                   <FileDown size={12}/> Generează PDF
+                </button>
+                <button onClick={()=>{
+                  const [yr, mo] = pdfLunaDate.split('-').map(Number);
+                  exportaCSVPayroll(new Date(yr, mo-1, 1));
+                  setShowPdfPicker(false);
+                }} className="w-full bg-lime-900/50 border border-lime-500/40 text-lime-300 text-[12px] font-semibold py-1.5 rounded-lg hover:bg-lime-800/60 transition-all flex items-center justify-center gap-1.5">
+                  <FileText size={12}/> Export CSV (payroll)
                 </button>
               </div>
               </>
             )}
+            <div className="relative">
+              <button onClick={()=>setShowConformitatePicker(p=>!p)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-500/30 text-slate-300 text-[12px] font-semibold hover:bg-slate-700 transition-all">
+                <FileDown size={13}/> Conformitate
+              </button>
+              {showConformitatePicker && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={()=>setShowConformitatePicker(false)}/>
+                  <div className="absolute top-9 left-0 z-50 bg-[#2c2c2e] border border-white/[0.1] rounded-xl shadow-2xl p-3 w-64" onClick={e=>e.stopPropagation()}>
+                    <p className="text-[11px] text-zinc-400 font-semibold mb-2">Raport de conformitate — alege perioada:</p>
+                    <div className="flex items-center gap-2 mb-2">
+                      <input type="date" value={conformitateStart} onChange={e=>setConformitateStart(e.target.value)}
+                        className="flex-1 bg-black/40 border border-white/[0.08] rounded-lg px-2 py-1.5 text-[11px] text-white outline-none focus:border-slate-400/50"/>
+                      <span className="text-zinc-600 text-[11px]">–</span>
+                      <input type="date" value={conformitateEnd} onChange={e=>setConformitateEnd(e.target.value)}
+                        className="flex-1 bg-black/40 border border-white/[0.08] rounded-lg px-2 py-1.5 text-[11px] text-white outline-none focus:border-slate-400/50"/>
+                    </div>
+                    <button onClick={()=>{
+                      generateRaportConformitate(parseD(conformitateStart), parseD(conformitateEnd));
+                      setShowConformitatePicker(false);
+                    }} className="w-full bg-slate-700 border border-slate-500/40 text-slate-200 text-[12px] font-semibold py-1.5 rounded-lg hover:bg-slate-600 transition-all flex items-center justify-center gap-1.5">
+                      <FileDown size={12}/> Generează raport
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <button onClick={()=>window.print()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-300 text-[12px] font-semibold hover:bg-zinc-700 transition-all">
               <Printer size={13}/> Print
             </button>
@@ -2631,6 +2821,9 @@ export default function RotaFlow() {
             </button>
             <button onClick={()=>setShowMatrice(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-900/40 border border-teal-500/30 text-teal-300 text-[12px] font-semibold hover:bg-teal-800/50 transition-all">
               <Scale size={13}/> Matrice
+            </button>
+            <button onClick={()=>{ setModSelectieMultipla(p=>!p); setCeluleSelectate(new Set()); }} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] font-semibold transition-all ${modSelectieMultipla?'bg-sky-900/50 border-sky-500/50 text-sky-300':'bg-zinc-800 border-zinc-600 text-zinc-300 hover:bg-zinc-700'}`}>
+              <Check size={13}/> {modSelectieMultipla?'Ieși din selecție':'Selectare multiplă'}
             </button>
             {locatieActiva==='PLO' && (
               <>
@@ -3037,6 +3230,16 @@ export default function RotaFlow() {
                               if (isLocked) return;
                               e.preventDefault();
 
+                              if (modSelectieMultipla) {
+                                const cheie = `${m.id}_${dStr}`;
+                                setCeluleSelectate(prev => {
+                                  const nou = new Set(prev);
+                                  if (nou.has(cheie)) nou.delete(cheie); else nou.add(cheie);
+                                  return nou;
+                                });
+                                return;
+                              }
+
                               const overrideActiv = turaOverride.find(o=>o.id.startsWith('drag_')&&o.angajatId===m.id&&o.data===dStr);
                               const isRightClick = e.button === 2 || e.ctrlKey;
 
@@ -3147,7 +3350,7 @@ export default function RotaFlow() {
                                 <div
                                   onClick={handleCellClick}
                                   onContextMenu={e=>{ e.preventDefault(); handleCellClick(e); }}
-                                  title={esteRunner
+                                  title={modSelectieMultipla ? 'Click pentru a selecta/deselecta' : esteRunner
                                     ? 'Click stg = R (8h) · Click dr = Z→N→L · din nou = șterge'
                                     : isLocked ? '' : isCTA(m)
                                       ? 'Click = Z/L · Click dr = N/L · din nou = șterge'
@@ -3157,6 +3360,7 @@ export default function RotaFlow() {
                                     ${styleRunnerSau}
                                     ${t.swapped?'ring-2 ring-amber-400/60':''}
                                     ${hasManualOverride?'ring-2 ring-white/30':''}
+                                    ${modSelectieMultipla && celuleSelectate.has(`${m.id}_${dStr}`) ? 'ring-2 ring-sky-400 bg-sky-500/20' : ''}
                                     ${isLocked ? 'cursor-default' : 'cursor-pointer active:scale-95'}
                                   `}>
                                   {/* Continut celula */}
@@ -4584,6 +4788,29 @@ export default function RotaFlow() {
                 <button onClick={salveazaDeplasari} className="flex-1 bg-purple-900/50 border border-purple-500/40 text-purple-200 text-[12px] font-semibold py-2 rounded-lg hover:bg-purple-800/60 transition-all">Salvează</button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ── Bara flotanta de actiuni in masa ── */}
+        {modSelectieMultipla && celuleSelectate.size > 0 && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-[#2c2c2e] border border-sky-500/40 rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-3 no-print">
+            <span className="text-[12px] font-bold text-sky-300 whitespace-nowrap">{celuleSelectate.size} selectate</span>
+            <div className="w-px h-5 bg-white/10"/>
+            {locatieActiva === 'PLO' ? (
+              <>
+                <button onClick={()=>aplicaInMasa('D')} className="px-3 py-1.5 rounded-lg bg-sky-900/50 border border-sky-500/30 text-sky-300 text-[11px] font-bold hover:bg-sky-800/60 transition-all">Zi</button>
+                <button onClick={()=>aplicaInMasa('S')} className="px-3 py-1.5 rounded-lg bg-purple-900/50 border border-purple-500/30 text-purple-300 text-[11px] font-bold hover:bg-purple-800/60 transition-all">Noapte</button>
+              </>
+            ) : (
+              <>
+                <button onClick={()=>aplicaInMasa('Z')} className="px-3 py-1.5 rounded-lg bg-orange-900/50 border border-orange-500/30 text-orange-300 text-[11px] font-bold hover:bg-orange-800/60 transition-all">Zi</button>
+                <button onClick={()=>aplicaInMasa('N')} className="px-3 py-1.5 rounded-lg bg-indigo-900/50 border border-indigo-500/30 text-indigo-300 text-[11px] font-bold hover:bg-indigo-800/60 transition-all">Noapte</button>
+              </>
+            )}
+            <button onClick={()=>aplicaInMasa('L')} className="px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-300 text-[11px] font-bold hover:bg-zinc-700 transition-all">Liber</button>
+            <div className="w-px h-5 bg-white/10"/>
+            <button onClick={stergeInMasa} className="px-3 py-1.5 rounded-lg bg-red-900/40 border border-red-500/30 text-red-300 text-[11px] font-bold hover:bg-red-800/50 transition-all">Șterge override-uri</button>
+            <button onClick={()=>setCeluleSelectate(new Set())} className="px-3 py-1.5 rounded-lg bg-white/[0.05] border border-white/10 text-zinc-400 text-[11px] font-bold hover:bg-white/10 transition-all">Anulează selecția</button>
           </div>
         )}
 
