@@ -2794,21 +2794,21 @@ export default function RotaFlow() {
             <span className="font-bold text-[16px] tracking-tight">RotaFlow</span>
 
             {/* ── Selector Locatie ── */}
-            <div className="flex items-center gap-1 bg-white/[0.05] border border-white/[0.08] rounded-xl p-1">
+            <div className="h-9 flex items-center gap-1 bg-white/[0.05] border border-white/[0.08] rounded-xl p-1">
               <button
                 onClick={()=>setLocatieActiva('PLO')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all ${
+                className={`h-full flex items-center gap-1.5 px-3.5 rounded-lg text-[12.5px] font-bold transition-all duration-150 ${
                   locatieActiva==='PLO'
-                    ? 'bg-[#0078d4] text-white shadow-lg shadow-[#0078d4]/30'
+                    ? 'bg-[#0078d4] text-white shadow-md shadow-[#0078d4]/25'
                     : 'text-zinc-400 hover:text-white'
                 }`}>
                 🏭 Ploiești
               </button>
               <button
                 onClick={()=>setLocatieActiva('CTA')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all ${
+                className={`h-full flex items-center gap-1.5 px-3.5 rounded-lg text-[12.5px] font-bold transition-all duration-150 ${
                   locatieActiva==='CTA'
-                    ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
+                    ? 'bg-amber-600 text-white shadow-md shadow-amber-600/25'
                     : 'text-zinc-400 hover:text-white'
                 }`}>
                 ⚓ Constanța
@@ -2842,23 +2842,23 @@ export default function RotaFlow() {
               </span>
             )}
           </div>
-          <div className="flex gap-1">
+          <div className="h-9 flex items-center gap-1">
             {([['rota','Rotație'],['luna','Calendar'],['stats','Statistici'],['swap','Swap'],['log','Istoric']] as const).map(([t,l])=>(
               <button key={t} onClick={()=>setActiveTab(t)}
-                className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${activeTab===t?'bg-white/10 text-white':'text-zinc-400 hover:text-white hover:bg-white/[0.06]'}`}>
+                className={`h-full flex items-center px-3.5 rounded-lg text-[12.5px] font-medium transition-all duration-150 ${activeTab===t?'bg-white/10 text-white':'text-zinc-400 hover:text-white hover:bg-white/[0.06]'}`}>
                 {l}
               </button>
             ))}
           </div>
           <div className="flex gap-2 relative">
             <button onClick={()=>{ setPdfLunaDate(`${weekStart.getFullYear()}-${String(weekStart.getMonth()+1).padStart(2,'0')}`); setShowPdfPicker(p=>!p); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-900/40 border border-emerald-500/30 text-emerald-300 text-[12px] font-semibold hover:bg-emerald-800/50 transition-all">
-              <FileDown size={13}/> PDF
+              className="h-9 min-w-[92px] flex items-center justify-center gap-1.5 px-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.11] border border-white/[0.09] text-zinc-100 text-[12.5px] font-semibold transition-all duration-150 active:scale-[0.96] whitespace-nowrap">
+              <FileDown size={15} strokeWidth={2.25}/> PDF
             </button>
             {showPdfPicker && (
               <>
                 <div className="fixed inset-0 z-40" onClick={()=>setShowPdfPicker(false)}/>
-                <div className="absolute top-9 left-0 z-50 bg-[#2c2c2e] border border-white/[0.1] rounded-xl shadow-2xl p-3 w-56" onClick={e=>e.stopPropagation()}>
+                <div className="absolute top-11 left-0 z-50 bg-[#2c2c2e] border border-white/[0.1] rounded-2xl shadow-2xl shadow-black/40 p-3 w-56" onClick={e=>e.stopPropagation()}>
                 <p className="text-[11px] text-zinc-400 font-semibold mb-2">Alege luna pentru PDF:</p>
                 <input type="month" value={pdfLunaDate}
                   onChange={e=>setPdfLunaDate(e.target.value)}
@@ -2867,33 +2867,33 @@ export default function RotaFlow() {
                   const [yr, mo] = pdfLunaDate.split('-').map(Number);
                   generatePDF(new Date(yr, mo-1, 1));
                   setShowPdfPicker(false);
-                }} className="w-full bg-emerald-900/50 border border-emerald-500/40 text-emerald-300 text-[12px] font-semibold py-1.5 rounded-lg hover:bg-emerald-800/60 transition-all flex items-center justify-center gap-1.5 mb-2">
-                  <FileDown size={12}/> Generează PDF
+                }} className="w-full h-9 bg-emerald-900/50 border border-emerald-500/40 text-emerald-300 text-[12px] font-semibold rounded-xl hover:bg-emerald-800/60 transition-all duration-150 active:scale-[0.97] flex items-center justify-center gap-1.5 mb-2">
+                  <FileDown size={13}/> Generează PDF
                 </button>
                 <button onClick={()=>{
                   const [yr, mo] = pdfLunaDate.split('-').map(Number);
                   exportaCSVPayroll(new Date(yr, mo-1, 1));
                   setShowPdfPicker(false);
-                }} className="w-full bg-lime-900/50 border border-lime-500/40 text-lime-300 text-[12px] font-semibold py-1.5 rounded-lg hover:bg-lime-800/60 transition-all flex items-center justify-center gap-1.5">
-                  <FileText size={12}/> Export CSV (payroll)
+                }} className="w-full h-9 bg-lime-900/50 border border-lime-500/40 text-lime-300 text-[12px] font-semibold rounded-xl hover:bg-lime-800/60 transition-all duration-150 active:scale-[0.97] flex items-center justify-center gap-1.5">
+                  <FileText size={13}/> Export CSV (payroll)
                 </button>
               </div>
               </>
             )}
             <button onClick={sincronizeazaDB} disabled={syncLoading}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] font-semibold transition-all disabled:opacity-50
-                ${syncError ? 'bg-red-900/50 border-red-500/40 text-red-300' : syncOk ? 'bg-green-900/50 border-green-500/40 text-green-300' : 'bg-blue-900/40 border-blue-500/30 text-blue-300 hover:bg-blue-800/50'}`}>
+              className={`h-9 min-w-[92px] flex items-center justify-center gap-1.5 px-3.5 rounded-xl border text-[12.5px] font-semibold transition-all duration-150 active:scale-[0.96] disabled:active:scale-100 disabled:opacity-60 whitespace-nowrap
+                ${syncError ? 'bg-red-900/50 border-red-500/40 text-red-300' : syncOk ? 'bg-emerald-600 border-emerald-500 text-white shadow-md shadow-emerald-600/20' : 'bg-[#0078d4] hover:bg-[#0086ef] border-[#0078d4] text-white shadow-md shadow-[#0078d4]/25'}`}>
               {syncLoading
-                ? <><span className="w-3 h-3 border border-blue-400/30 border-t-blue-300 rounded-full animate-spin inline-block"/><span>Sincronizare...</span></>
+                ? <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block"/><span>Sincronizare...</span></>
                 : syncError
-                  ? <><AlertTriangle size={13}/> Eroare — reîncearcă</>
+                  ? <><AlertTriangle size={15}/> Reîncearcă</>
                 : syncOk
-                  ? <><Check size={13}/> Sincronizat!</>
-                  : <><Cloud size={13}/> Sincronizează DB</>
+                  ? <><Check size={15} strokeWidth={2.5}/> Sincronizat!</>
+                  : <><Cloud size={15} strokeWidth={2.25}/> Sincronizează DB</>
               }
             </button>
             {syncError && (
-              <div className="w-full basis-full flex items-center gap-2 bg-red-950/40 border border-red-500/30 rounded-lg px-3 py-2 text-[11px] text-red-300">
+              <div className="w-full basis-full flex items-center gap-2 bg-red-950/40 border border-red-500/30 rounded-xl px-3 py-2 text-[11px] text-red-300">
                 <AlertTriangle size={12} className="flex-shrink-0"/>
                 <span className="flex-1">{syncError}</span>
                 <button onClick={()=>setSyncError(null)} className="text-red-400/70 hover:text-red-300">✕</button>
@@ -2902,13 +2902,13 @@ export default function RotaFlow() {
 
             {/* ── Meniu unificat — restul actiunilor, ca sa nu se aglomereze bara ── */}
             <div className="relative">
-              <button onClick={()=>setShowMeniuPrincipal(p=>!p)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-300 text-[12px] font-semibold hover:bg-zinc-700 transition-all">
-                <Edit3 size={13}/> Meniu
+              <button onClick={()=>setShowMeniuPrincipal(p=>!p)} className="h-9 min-w-[92px] flex items-center justify-center gap-1.5 px-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.11] border border-white/[0.09] text-zinc-100 text-[12.5px] font-semibold transition-all duration-150 active:scale-[0.96] whitespace-nowrap">
+                <Edit3 size={15} strokeWidth={2.25}/> Meniu
               </button>
               {showMeniuPrincipal && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={()=>setShowMeniuPrincipal(false)}/>
-                  <div className="absolute top-9 left-0 z-50 bg-[#2c2c2e] border border-white/[0.1] rounded-xl shadow-2xl p-1.5 w-56 flex flex-col gap-0.5" onClick={e=>e.stopPropagation()}>
+                  <div className="absolute top-11 left-0 z-50 bg-[#2c2c2e] border border-white/[0.1] rounded-2xl shadow-2xl shadow-black/40 p-1.5 w-56 flex flex-col gap-0.5" onClick={e=>e.stopPropagation()}>
                     <button onClick={()=>{ setShowCO(true); setShowMeniuPrincipal(false); }} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-sky-300 hover:bg-white/[0.06] transition-all text-left">
                       <Calendar size={14}/> Concedii
                     </button>
@@ -3005,8 +3005,8 @@ export default function RotaFlow() {
               </>
             )}
 
-            <button onClick={()=>{ if(confirm('Ieși din aplicație?')) logout(); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-600 text-zinc-400 text-[12px] font-semibold hover:bg-zinc-700 hover:text-zinc-200 transition-all ml-auto">
-              <LogOut size={13}/> Logout
+            <button onClick={()=>{ if(confirm('Ieși din aplicație?')) logout(); }} className="h-9 min-w-[92px] flex items-center justify-center gap-1.5 px-3.5 rounded-xl bg-white/[0.06] hover:bg-red-950/40 border border-white/[0.09] hover:border-red-500/30 text-zinc-300 hover:text-red-300 text-[12.5px] font-semibold transition-all duration-150 active:scale-[0.96] whitespace-nowrap ml-auto">
+              <LogOut size={15} strokeWidth={2.25}/> Logout
             </button>
           </div>
         </div>
