@@ -2859,6 +2859,9 @@ export default function RotaFlow() {
                     {locatieActiva==='PLO' && (
                       <>
                         <div className="h-px bg-white/[0.06] my-1"/>
+                        <button onClick={()=>{ setSuplinitorActiv(s=>!s); setShowMeniuPrincipal(false); }} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold hover:bg-white/[0.06] transition-all text-left ${suplinitorFinal?'text-orange-300':'text-zinc-300'}`}>
+                          <HeartPulse size={14}/> {suplinitorFinal?'Scoate Suplinitor':'Activează Suplinitor'}
+                        </button>
                         <button onClick={()=>{ setShowUrgente(true); setShowMeniuPrincipal(false); }} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-semibold hover:bg-white/[0.06] transition-all text-left ${modeAvarie?'text-orange-300':'text-rose-300'}`}>
                           <AlertTriangle size={14}/> Urgențe
                         </button>
