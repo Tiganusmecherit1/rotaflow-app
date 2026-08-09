@@ -1998,16 +1998,36 @@ export default function RotaFlow() {
 
     const disponibili = runneri.filter(r => {
       for (let d = new Date(start); d <= end; d = new Date(d.getTime()+86400000)) {
-        if (inAbsenta(d, r, 'any')) return false;
+        if (inAbsenta(d, r, 'any') || inCO(d, r)) return false;
       }
       const ocupatDeja = runnerCicluOverride[r.id];
       if (ocupatDeja) {
         const ocupatStart = parseD(ocupatDeja.perioadaStart), ocupatEnd = parseD(ocupatDeja.perioadaSfarsit);
+        // Suprapunere directa cu perioada noua
         if (start <= ocupatEnd && end >= ocupatStart) return false;
+        // SAU angajamentul lui vechi inca nu s-a incheiat (data de sfarsit e in viitor) —
+        // il excludem oricum, ca sa nu-i "furam" acoperirea inainte sa apuce sa fie sincronizata.
+        const azi = new Date(); azi.setHours(0,0,0,0);
+        if (ocupatEnd >= azi) return false;
       }
       return true;
     });
     if (disponibili.length === 0) return { runnerId: null, existaGol: true };
+
+    // Prudență suplimentară: nu folosim NICIODATĂ ultimul runner complet liber.
+    // Păstrăm mereu cel puțin unul "în buzunar", pentru alte nevoi reale pe care
+    // aplicația nu le vede (Craiova, nave etc). Doar dacă AMÂNDOI sunt liberi acum,
+    // selecția automată poate folosi unul dintre ei — niciodată pe ultimul rămas.
+    const runneriCompletLiberi = runneri.filter(r => {
+      const ocupatDeja = runnerCicluOverride[r.id];
+      if (!ocupatDeja) return true;
+      const ocupatEnd = parseD(ocupatDeja.perioadaSfarsit);
+      const azi0 = new Date(); azi0.setHours(0,0,0,0);
+      return ocupatEnd < azi0; // liber doar daca angajamentul lui vechi s-a incheiat deja
+    });
+    if (runneriCompletLiberi.length <= 1) {
+      return { runnerId: null, existaGol: true }; // pastram rezerva — nu asignam automat
+    }
 
     const azi = new Date();
     const acum30zile = new Date(azi.getTime() - 30*86400000);
@@ -2061,7 +2081,7 @@ export default function RotaFlow() {
     if (runnerIdFinal !== null) {
       asigneazaRunnerPentruConcediu(angajat, dataStart, dataSfarsit, runnerIdFinal, alesAutomat);
     } else if (avertismentGolNeacoperit) {
-      alert(`Atenție: ${angajat.nume} pleacă în concediu, dar niciun runner nu e disponibil să acopere golul (toți sunt ocupați sau în CM/AN). Verifică manual din Matrice.`);
+      alert(`Atenție: ${angajat.nume} pleacă în concediu, dar niciun runner nu e disponibil automat să acopere golul (fie sunt ocupați/în CM-AN, fie păstrăm intenționat unul în rezervă — nu asignăm automat ultimul runner liber). Alege manual din Matrice dacă vrei să folosești rezerva.`);
     }
     setAbsentaPopup(null);
   }, [echipa, adaugaConcediu, addLog, setEchipa, gasesteRunnerAutomat, asigneazaRunnerPentruConcediu]);
