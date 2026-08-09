@@ -1946,6 +1946,38 @@ export default function RotaFlow() {
   // pe cel cu cele mai PUTINE ore lucrate in ultimele 30 de zile (echitate).
   // Returneaza null daca nu exista niciun runner disponibil, sau daca oricum nu e nevoie
   // (acoperirea ramane 1Z+1N si fara runner).
+  // Functie comuna de asignare + persistenta a unui runner care acopera un concediu —
+  // folosita din AMBELE locuri unde se poate adauga un concediu CTA (popup rapid SI
+  // fereastra Concedii), ca sa nu mai existe doua copii ale formulei care pot diverge.
+  const asigneazaRunnerPentruConcediu = useCallback((
+    angajat: Angajat, dataStart: string, dataSfarsit: string, runnerId: number, alesAutomat: boolean
+  ) => {
+    const ra = echipa.find(m => m.id === runnerId);
+    if (!ra || !angajat.dataStartCiclu) return;
+    const sf = new Date(dataSfarsit + 'T00:00:00');
+    let sfE = new Date(sf);
+    const dow = sf.getDay();
+    // Extindere identica cu regula reala din inCO: Vineri extinde mereu spre Duminica.
+    // Sambata extinde spre Duminica DOAR daca Vinerea dinainte e si ea acoperita de concediu.
+    if (dow === 5) sfE = new Date(sf.getTime() + 2*86400000);
+    else if (dow === 6) {
+      const vineriDinainte = new Date(sf.getTime() - 86400000);
+      if (vineriDinainte >= new Date(dataStart + 'T00:00:00')) sfE = new Date(sf.getTime() + 1*86400000);
+    }
+    const perioadaSfarsitFinal = fmtDateInput(sfE);
+    setRunnerCicluOverride(prev => ({...prev, [runnerId]: {dataStartCiclu: angajat.dataStartCiclu!, perioadaStart: dataStart, perioadaSfarsit: perioadaSfarsitFinal}}));
+    addLog(alesAutomat
+      ? `Runner ${ra.nume} asignat AUTOMAT (cele mai puține ore) → acoperă ${angajat.nume} (${dataStart}–${perioadaSfarsitFinal})`
+      : `Runner ${ra.nume} -> acopera ${angajat.nume} (${dataStart}–${perioadaSfarsitFinal})`);
+    fetch('/api/runner-alocari', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        runner_pozitie: runnerId, angajat_acoperit_pozitie: angajat.id, angajat_acoperit_uuid: angajat.uuid,
+        data_start_ciclu: angajat.dataStartCiclu, perioada_start: dataStart, perioada_sfarsit: perioadaSfarsitFinal,
+      }),
+    }).catch(err => console.error('Eroare salvare alocare runner:', err));
+  }, [echipa, addLog, setRunnerCicluOverride]);
+
   const gasesteRunnerAutomat = useCallback((
     angajatAbsent: Angajat, dataStart: string, dataSfarsit: string
   ): { runnerId: number | null; existaGol: boolean } => {
@@ -2027,40 +2059,12 @@ export default function RotaFlow() {
     }
 
     if (runnerIdFinal !== null) {
-      const ra = echipa.find(m => m.id === runnerIdFinal);
-      if (ra && angajat.dataStartCiclu) {
-        const sf = new Date(dataSfarsit + 'T00:00:00');
-        let sfE = new Date(sf);
-        const dow = sf.getDay();
-        // Extindere identica cu regula reala din inCO: doar Vineri/Sambata extind spre Duminica.
-        // Luni-Joi NU extind deloc (angajatul revine normal a doua zi) — formula veche extindea
-        // gresit orice zi Luni-Joi pana Sambata, tinand runnerul alocat 2-3 zile in plus, degeaba.
-        // Extindere identica cu regula reala din inCO: Vineri extinde mereu spre Duminica.
-        // Sambata extinde spre Duminica DOAR daca Vinerea dinainte e si ea acoperita de concediu
-        // (altfel un concediu de-o singura zi, chiar Sambata, ar extinde gresit spre Duminica).
-        if (dow === 5) sfE = new Date(sf.getTime() + 2*86400000);
-        else if (dow === 6) {
-          const vineriDinainte = new Date(sf.getTime() - 86400000);
-          if (vineriDinainte >= new Date(dataStart + 'T00:00:00')) sfE = new Date(sf.getTime() + 1*86400000);
-        }
-        const perioadaSfarsitFinal = fmtDateInput(sfE);
-        setRunnerCicluOverride(prev => ({...prev, [runnerIdFinal!]: {dataStartCiclu: angajat.dataStartCiclu!, perioadaStart: dataStart, perioadaSfarsit: perioadaSfarsitFinal}}));
-        addLog(alesAutomat
-          ? `Runner ${ra.nume} asignat AUTOMAT (cele mai puține ore) → acoperă ${angajat.nume} (${dataStart}–${perioadaSfarsitFinal})`
-          : `Runner ${ra.nume} -> acopera ${angajat.nume} (${dataStart}–${perioadaSfarsitFinal})`);
-        fetch('/api/runner-alocari', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            runner_pozitie: runnerIdFinal, angajat_acoperit_pozitie: angajat.id, angajat_acoperit_uuid: angajat.uuid,
-            data_start_ciclu: angajat.dataStartCiclu, perioada_start: dataStart, perioada_sfarsit: perioadaSfarsitFinal,
-          }),
-        }).catch(err => console.error('Eroare salvare alocare runner:', err));
-      }
+      asigneazaRunnerPentruConcediu(angajat, dataStart, dataSfarsit, runnerIdFinal, alesAutomat);
     } else if (avertismentGolNeacoperit) {
       alert(`Atenție: ${angajat.nume} pleacă în concediu, dar niciun runner nu e disponibil să acopere golul (toți sunt ocupați sau în CM/AN). Verifică manual din Matrice.`);
     }
     setAbsentaPopup(null);
-  }, [echipa, adaugaConcediu, addLog, setEchipa, setRunnerCicluOverride, gasesteRunnerAutomat]);
+  }, [echipa, adaugaConcediu, addLog, setEchipa, gasesteRunnerAutomat, asigneazaRunnerPentruConcediu]);
 
   const stergeConcediu = useCallback((pi: number, ci: number) => {
     const angajatTarget = echipa[pi];
@@ -2786,6 +2790,15 @@ export default function RotaFlow() {
   const echipaPLO = useMemo(() => echipa.filter(m => (m.locatieId ?? 1) === 1), [echipa]);
   // Toti angajatii CTA (fix + runneri)
   const toataEchipaCTA = useMemo(() => echipa.filter(m => (m.locatieId ?? 1) === 2), [echipa]);
+
+  const deschidePopupAbsenta = useCallback((m: Angajat) => {
+    const azi = new Date();
+    const dataStart = fmtDateInput(azi);
+    const runneri = toataEchipaCTA.filter(r => r.tip==='runner');
+    const disponibili = runneri.filter(r => !runnerCicluOverride[r.id]);
+    const sugerat = disponibili.sort((a,b) => (oreAcumulate[a.id]||0)-(oreAcumulate[b.id]||0))[0] ?? null;
+    setAbsentaPopup({ angajat: m, tip: null, dataStart, dataSfarsit: dataStart, saptamani: 1, runnerId: sugerat?.id ?? null });
+  }, [toataEchipaCTA, runnerCicluOverride, oreAcumulate]);
   // Toggle runner — local only, nu afecteaza PWA
   const toggleRunner = (id: number) => {
     setRunneriActivi(prev => {
@@ -3457,34 +3470,14 @@ export default function RotaFlow() {
                                       setDeplasarePopup({ angajat: m, texte });
                                       return;
                                     }
-                                    const azi = new Date();
-                                    const dataStart = fmtDateInput(azi);
-                                    // Gasim runnerul sugerat (relevant doar pentru CTA — pentru PLO sectiunea e ascunsa)
-                                    const runneri = toataEchipaCTA.filter(r => r.tip==='runner');
-                                    const disponibili = runneri.filter(r => !runnerCicluOverride[r.id]);
-                                    const sugerat = disponibili.sort((a,b) => (oreAcumulate[a.id]||0)-(oreAcumulate[b.id]||0))[0] ?? null;
-                                    setAbsentaPopup({
-                                      angajat: m,
-                                      tip: null,
-                                      dataStart,
-                                      dataSfarsit: dataStart,
-                                      saptamani: 1,
-                                      runnerId: sugerat?.id ?? null,
-                                    });
+                                    deschidePopupAbsenta(m);
                                   }}
                                   title={m.tip==='runner' ? 'Click pentru deplasări' : 'Click pentru absență rapidă'}
                                 >{m.nume}</span>
                                 {oreS>0&&<span className={`ml-2 text-[10px] ${oreS>48?'text-red-400 font-bold':'text-zinc-600'}`}>{oreS}h</span>}
                                 <span className="ml-1 text-[9px] text-zinc-700 cursor-pointer hover:text-blue-400"
                                   title="Concediu / CM / AN"
-                                  onClick={() => {
-                                    const azi = new Date();
-                                    const dataStart = fmtDateInput(azi);
-                                    const runneri = toataEchipaCTA.filter(r => r.tip==='runner');
-                                    const disponibili = runneri.filter(r => !runnerCicluOverride[r.id]);
-                                    const sugerat = disponibili.sort((a,b) => (oreAcumulate[a.id]||0)-(oreAcumulate[b.id]||0))[0] ?? null;
-                                    setAbsentaPopup({ angajat: m, tip: null, dataStart, dataSfarsit: dataStart, saptamani: 1, runnerId: sugerat?.id ?? null });
-                                  }}>＋</span>
+                                  onClick={() => deschidePopupAbsenta(m)}>＋</span>
                               </div>
                             </div>
                           </td>
@@ -4789,46 +4782,15 @@ export default function RotaFlow() {
                                 ))}
                               </div>
                             )}
-                            {/* Picker liber: data start + durata (1 sau 2 saptamani), functioneaza pe orice an */}
-                            <div className="bg-white/[0.03] border border-white/[0.07] rounded-xl p-3 space-y-2">
-                              <div className="flex items-center gap-2">
-                                <div className="flex-1">
-                                  <MiniDatePicker
-                                    value={coFormStart[m.id] ?? ''}
-                                    onChange={v => setCoFormStart(prev => ({...prev, [m.id]: v}))}
-                                  />
-                                </div>
-                                <select
-                                  value={coFormSaptamani[m.id] ?? 1}
-                                  onChange={e => setCoFormSaptamani(prev => ({...prev, [m.id]: Number(e.target.value) as 1|2}))}
-                                  className="bg-black/40 border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none focus:border-sky-500/50 cursor-pointer"
-                                >
-                                  <option value={1}>1 săptămână</option>
-                                  <option value={2}>2 săptămâni</option>
-                                </select>
-                                <button
-                                  onClick={() => {
-                                    const start = coFormStart[m.id];
-                                    if (!start) { setCoFormEroare(prev=>({...prev,[m.id]:'Alege o dată de start.'})); return; }
-                                    const saptamani = coFormSaptamani[m.id] ?? 1;
-                                    const dataStartObj = parseD(start);
-                                    const dataEndObj = new Date(dataStartObj.getTime() + (saptamani*7 - 1) * 86400000);
-                                    const eStr = fmtDateInput(dataEndObj);
-                                    const numeSlot = `${fmtDate(dataStartObj)}–${fmtDate(dataEndObj)}`;
-                                    const eroare = adaugaConcediu(i, { n: numeSlot, s: start, e: eStr });
-                                    if (eroare) { setCoFormEroare(prev => ({...prev, [m.id]: eroare})); return; }
-                                    setCoFormEroare(prev => ({...prev, [m.id]: ''}));
-                                    setCoFormStart(prev => ({...prev, [m.id]: ''}));
-                                  }}
-                                  className="bg-sky-900/40 border border-sky-500/40 text-sky-300 text-[11px] font-semibold px-3 py-1.5 rounded-lg hover:bg-sky-800/50 transition-all whitespace-nowrap"
-                                >
-                                  + Adaugă
-                                </button>
-                              </div>
-                              {coFormEroare[m.id] && (
-                                <p className="text-[10px] text-rose-400">{coFormEroare[m.id]}</p>
-                              )}
-                            </div>
+                            {/* Adaugare concediu — foloseste EXACT acelasi popup ca butonul rapid de pe grila
+                                principala (cu alegere de tip CO/CM/AN, date, si runner manual/automat),
+                                ca sa nu existe doua fluxuri diferite care pot ajunge sa se comporte diferit. */}
+                            <button
+                              onClick={() => deschidePopupAbsenta(m)}
+                              className="w-full flex items-center justify-center gap-1.5 bg-sky-900/30 border border-sky-500/25 text-sky-300 text-[11px] font-semibold py-2 rounded-lg hover:bg-sky-800/40 transition-all"
+                            >
+                              + Adaugă concediu / CM / AN
+                            </button>
                           </div>
                         ))}
                       </div>
