@@ -1941,6 +1941,57 @@ export default function RotaFlow() {
     setDeplasarePopup(null);
   }, [deplasarePopup, days, turaOverride, getTuraW, addLog]);
 
+  // Alege automat cel mai potrivit runner sa acopere o absenta CTA: doar dintre cei
+  // DISPONIBILI (nu sunt in CM/AN, nu acopera deja pe altcineva in aceeasi perioada),
+  // pe cel cu cele mai PUTINE ore lucrate in ultimele 30 de zile (echitate).
+  // Returneaza null daca nu exista niciun runner disponibil, sau daca oricum nu e nevoie
+  // (acoperirea ramane 1Z+1N si fara runner).
+  const gasesteRunnerAutomat = useCallback((
+    angajatAbsent: Angajat, dataStart: string, dataSfarsit: string
+  ): { runnerId: number | null; existaGol: boolean } => {
+    if (!isCTA(angajatAbsent) || !angajatAbsent.dataStartCiclu) return { runnerId: null, existaGol: false };
+
+    const fix = echipa.filter(m => isCTA(m) && m.tip !== 'runner' && m.id !== angajatAbsent.id);
+    const runneri = echipa.filter(m => isCTA(m) && m.tip === 'runner');
+    const start = parseD(dataStart), end = parseD(dataSfarsit);
+
+    let existaGol = false;
+    for (let d = new Date(start); d <= end; d = new Date(d.getTime()+86400000)) {
+      const activi = fix.filter(m => !inCO(d,m) && !inAbsenta(d,m,'any'));
+      const nZ = activi.filter(m => getTuraCTA(d, m.dataStartCiclu!) === 'Z').length;
+      const nN = activi.filter(m => getTuraCTA(d, m.dataStartCiclu!) === 'N').length;
+      if (nZ < 1 || nN < 1) { existaGol = true; break; }
+    }
+    if (!existaGol) return { runnerId: null, existaGol: false };
+
+    const disponibili = runneri.filter(r => {
+      for (let d = new Date(start); d <= end; d = new Date(d.getTime()+86400000)) {
+        if (inAbsenta(d, r, 'any')) return false;
+      }
+      const ocupatDeja = runnerCicluOverride[r.id];
+      if (ocupatDeja) {
+        const ocupatStart = parseD(ocupatDeja.perioadaStart), ocupatEnd = parseD(ocupatDeja.perioadaSfarsit);
+        if (start <= ocupatEnd && end >= ocupatStart) return false;
+      }
+      return true;
+    });
+    if (disponibili.length === 0) return { runnerId: null, existaGol: true };
+
+    const azi = new Date();
+    const acum30zile = new Date(azi.getTime() - 30*86400000);
+    let celMaiOdihnit: Angajat | null = null;
+    let oreMinime = Infinity;
+    for (const r of disponibili) {
+      let ore = 0;
+      for (let d = new Date(acum30zile); d <= azi; d = new Date(d.getTime()+86400000)) {
+        const t = getTuraW(d, r);
+        ore += (t.type==='Z'||t.type==='N') ? 12 : (['D','S','R','B','PLO','DISP'].includes(t.type) ? 8 : 0);
+      }
+      if (ore < oreMinime) { oreMinime = ore; celMaiOdihnit = r; }
+    }
+    return { runnerId: celMaiOdihnit?.id ?? null, existaGol: true };
+  }, [echipa, getTuraW, runnerCicluOverride]);
+
   const aplicaAbsentaCTA = useCallback(async (
     angajat: Angajat,
     tip: 'CO'|'CM'|'AN',
@@ -1950,6 +2001,17 @@ export default function RotaFlow() {
   ) => {
     const pi = echipa.findIndex(m => m.id === angajat.id);
     if (pi === -1) return;
+
+    // Daca nu s-a ales manual un runner, incercam sa gasim automat unul potrivit —
+    // doar daca chiar apare un gol de acoperire, si doar dintre cei disponibili.
+    let runnerIdFinal = runnerId;
+    let alesAutomat = false;
+    let avertismentGolNeacoperit = false;
+    if (runnerIdFinal === null && tip === 'CO') {
+      const auto = gasesteRunnerAutomat(angajat, dataStart, dataSfarsit);
+      if (auto.runnerId !== null) { runnerIdFinal = auto.runnerId; alesAutomat = true; }
+      else if (auto.existaGol) { avertismentGolNeacoperit = true; }
+    }
 
     if (tip === 'CO') {
       const numeSlot = `${fmtDate(parseD(dataStart))}–${fmtDate(parseD(dataSfarsit))}`;
@@ -1964,8 +2026,8 @@ export default function RotaFlow() {
       if (angajat.uuid) apiAdaugaAbsenta(angajat.uuid, tip === 'CM' ? 'CM' : 'AN', dataStart, zile).catch(console.error);
     }
 
-    if (runnerId !== null) {
-      const ra = echipa.find(m => m.id === runnerId);
+    if (runnerIdFinal !== null) {
+      const ra = echipa.find(m => m.id === runnerIdFinal);
       if (ra && angajat.dataStartCiclu) {
         const sf = new Date(dataSfarsit + 'T00:00:00');
         let sfE = new Date(sf);
@@ -1982,19 +2044,23 @@ export default function RotaFlow() {
           if (vineriDinainte >= new Date(dataStart + 'T00:00:00')) sfE = new Date(sf.getTime() + 1*86400000);
         }
         const perioadaSfarsitFinal = fmtDateInput(sfE);
-        setRunnerCicluOverride(prev => ({...prev, [runnerId]: {dataStartCiclu: angajat.dataStartCiclu!, perioadaStart: dataStart, perioadaSfarsit: perioadaSfarsitFinal}}));
-        addLog(`Runner ${ra.nume} -> acopera ${angajat.nume} (${dataStart}–${perioadaSfarsitFinal})`);
+        setRunnerCicluOverride(prev => ({...prev, [runnerIdFinal!]: {dataStartCiclu: angajat.dataStartCiclu!, perioadaStart: dataStart, perioadaSfarsit: perioadaSfarsitFinal}}));
+        addLog(alesAutomat
+          ? `Runner ${ra.nume} asignat AUTOMAT (cele mai puține ore) → acoperă ${angajat.nume} (${dataStart}–${perioadaSfarsitFinal})`
+          : `Runner ${ra.nume} -> acopera ${angajat.nume} (${dataStart}–${perioadaSfarsitFinal})`);
         fetch('/api/runner-alocari', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            runner_pozitie: runnerId, angajat_acoperit_pozitie: angajat.id, angajat_acoperit_uuid: angajat.uuid,
+            runner_pozitie: runnerIdFinal, angajat_acoperit_pozitie: angajat.id, angajat_acoperit_uuid: angajat.uuid,
             data_start_ciclu: angajat.dataStartCiclu, perioada_start: dataStart, perioada_sfarsit: perioadaSfarsitFinal,
           }),
         }).catch(err => console.error('Eroare salvare alocare runner:', err));
       }
+    } else if (avertismentGolNeacoperit) {
+      alert(`Atenție: ${angajat.nume} pleacă în concediu, dar niciun runner nu e disponibil să acopere golul (toți sunt ocupați sau în CM/AN). Verifică manual din Matrice.`);
     }
     setAbsentaPopup(null);
-  }, [echipa, adaugaConcediu, addLog, setEchipa, setRunnerCicluOverride]);
+  }, [echipa, adaugaConcediu, addLog, setEchipa, setRunnerCicluOverride, gasesteRunnerAutomat]);
 
   const stergeConcediu = useCallback((pi: number, ci: number) => {
     const angajatTarget = echipa[pi];
