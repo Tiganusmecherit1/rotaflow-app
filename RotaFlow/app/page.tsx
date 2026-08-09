@@ -765,8 +765,8 @@ function analizeazaConformitate(echipa: Angajat[], simConcedii: SimConcediu[], s
 
 
 const SHIFT_STYLE: Record<string, string> = {
-  D:  'bg-sky-800/70 text-sky-100 border border-sky-400/50',
-  S:  'bg-purple-800/70 text-purple-100 border border-purple-400/50',
+  D:  'bg-amber-300/85 text-amber-900 border border-amber-300',
+  S:  'bg-blue-300/85 text-blue-900 border border-blue-300',
   L:  'bg-white/[0.03] text-zinc-600 border border-transparent',
   CO: 'bg-rose-800/60 text-rose-100 border border-rose-400/40',
   CM: 'bg-orange-800/60 text-orange-100 border border-orange-400/50',
@@ -2547,8 +2547,8 @@ export default function RotaFlow() {
           data.cell.styles.fillColor = [254, 243, 199];
           data.cell.styles.textColor = [120, 53, 15];
         }
-        if(!isCTAView && v==='Z') { data.cell.styles.fillColor=[219,234,254]; data.cell.styles.textColor=[30,64,175]; } // PLO Zi (8h) — culoarea veche de "D"
-        else if(!isCTAView && v==='N') { data.cell.styles.fillColor=[243,232,255]; data.cell.styles.textColor=[126,34,206]; } // PLO Noapte (8h) — culoarea veche de "S"
+        if(!isCTAView && v==='Z') { data.cell.styles.fillColor=[252,211,77]; data.cell.styles.textColor=[120,53,15]; } // PLO Zi (8h) — chihlimbar pastel, ca-n aplicatie
+        else if(!isCTAView && v==='N') { data.cell.styles.fillColor=[147,197,253]; data.cell.styles.textColor=[30,58,138]; } // PLO Noapte (8h) — albastru pastel, ca-n aplicatie
         else if(v==='Z') { data.cell.styles.fillColor=[254,243,199]; data.cell.styles.textColor=[120,53,15]; } // CTA Zi (12h)
         else if(v==='N') { data.cell.styles.fillColor=[224,231,255]; data.cell.styles.textColor=[55,48,163]; } // CTA Noapte (12h)
         else if(v==='R') { data.cell.styles.fillColor=[255,237,213]; data.cell.styles.textColor=[154,52,18]; }
@@ -3696,8 +3696,8 @@ export default function RotaFlow() {
                 {locatieActiva === 'PLO' ? (
                   // Legenda PLO — clase hardcodate (Tailwind purge)
                   <>
-                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-sky-800/70 border border-sky-400/50 flex items-center justify-center text-[9px] font-black text-sky-100">Z</div>Zi</div>
-                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-purple-800/70 border border-purple-400/50 flex items-center justify-center text-[9px] font-black text-purple-100">N</div>Noapte</div>
+                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-amber-300/85 border border-amber-300 flex items-center justify-center text-[9px] font-black text-amber-900">Z</div>Zi</div>
+                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-blue-300/85 border border-blue-300 flex items-center justify-center text-[9px] font-black text-blue-900">N</div>Noapte</div>
                     <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-white/[0.03] border border-white/10 flex items-center justify-center text-[9px] text-zinc-600">L</div>Liber</div>
                     <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-rose-800/60 border border-rose-400/40 flex items-center justify-center text-[9px] font-black text-rose-100">CO</div>Concediu</div>
                     <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-orange-800/60 border border-orange-400/50 flex items-center justify-center text-[9px] font-black text-orange-100">CM</div>Medical</div>
