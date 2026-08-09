@@ -20,7 +20,6 @@ const parseD = (s: string) => new Date(s + 'T00:00:00');
 
 const AVATAR_COLORS = ['#0078d4','#bf5af2','#4cd964','#ffd60a','#ff6b6b'];
 const DAY_SHORT = ['Lu','Ma','Mi','Jo','Vi','Sâ','Du'];
-const DAY_FULL = ['Luni','Marți','Miercuri','Joi','Vineri','Sâmbătă','Duminică'];
 const LS_KEY = 'rotaflow_v1';
 
 interface Concediu { n: string; s: string; e: string; uuid?: string }
@@ -168,11 +167,6 @@ function fmtDate(d: Date) { return d.toLocaleDateString('ro-RO', { day: '2-digit
 // Datele interne raman 'D'/'S' neschimbate (ore, reguli, tot codul de rotatie).
 // La CTA valorile reale sunt deja 'Z'/'N'/altele, deci mapping-ul nu le afecteaza.
 function dispLabel(s: string): string { return s === 'D' ? 'Z' : s === 'S' ? 'N' : s; }
-// Eticheta completa (cuvant, nu litera) pentru celulele mari — D/Z=Zi, S/N=Noapte, restul explicit
-function dispLabelFull(s: string): string {
-  const map: Record<string,string> = { D:'Zi', Z:'Zi', S:'Noapte', N:'Noapte', CO:'Concediu', CM:'Medical', AN:'Absent', L:'' };
-  return map[s] ?? s;
-}
 // Elimina diacriticele romanesti — necesar pentru export PDF (jsPDF/Helvetica nu le suporta)
 function faraDiacritice(s: string): string {
   return s
@@ -771,18 +765,18 @@ function analizeazaConformitate(echipa: Angajat[], simConcedii: SimConcediu[], s
 
 
 const SHIFT_STYLE: Record<string, string> = {
-  D:  'bg-orange-400/[0.09] text-orange-300 border-l-4 border-orange-400',
-  S:  'bg-violet-400/[0.09] text-violet-300 border-l-4 border-violet-500',
-  L:  'bg-white/[0.03] text-zinc-600 border-l-4 border-transparent',
-  CO: 'bg-red-400/[0.09] text-red-300 border-l-4 border-red-500',
-  CM: 'bg-pink-400/[0.09] text-pink-300 border-l-4 border-pink-500',
-  AN: 'bg-zinc-500/[0.12] text-zinc-300 border-l-4 border-zinc-500',
-  Z:  'bg-orange-400/[0.09] text-orange-300 border-l-4 border-orange-400',
-  N:  'bg-violet-400/[0.09] text-violet-300 border-l-4 border-violet-500',
-  B:  'bg-white/[0.04] text-zinc-400 border-l-4 border-zinc-600',   // Birou L-V
-  R:  'bg-teal-400/[0.09] text-teal-300 border-l-4 border-teal-500', // Runner activ
-  PLO: 'bg-blue-400/[0.09] text-blue-300 border-l-4 border-blue-500 animate-pulse', // Runner plecat la PLO (criza)
-  DISP: 'bg-amber-400/[0.09] text-amber-300 border-l-4 border-amber-500', // Runner disponibil ca suplinitor
+  D:  'bg-sky-800/70 text-sky-100 border border-sky-400/50',
+  S:  'bg-purple-800/70 text-purple-100 border border-purple-400/50',
+  L:  'bg-white/[0.03] text-zinc-600 border border-transparent',
+  CO: 'bg-rose-800/60 text-rose-100 border border-rose-400/40',
+  CM: 'bg-orange-800/60 text-orange-100 border border-orange-400/50',
+  AN: 'bg-red-800/70 text-red-100 border border-red-400/50',
+  Z:  'bg-amber-700/80 text-amber-50 border border-amber-400/60',
+  N:  'bg-indigo-800/80 text-indigo-100 border border-indigo-400/60',
+  B:  'bg-zinc-800/80 text-zinc-300 border border-zinc-500/50',   // Birou L-V
+  R:  'bg-orange-950/50 text-orange-300 border border-orange-500/30', // Runner activ
+  PLO: 'bg-blue-950/60 text-blue-300 border border-blue-500/40 animate-pulse', // Runner plecat la PLO (criza)
+  DISP: 'bg-amber-950/40 text-amber-300 border border-amber-500/30', // Runner disponibil ca suplinitor (Suplinitor activ la PLO)
 };
 
 // ─── Algoritm CTA — ciclu Z/N/L/L (4 zile) ───
@@ -3467,8 +3461,8 @@ export default function RotaFlow() {
                     <tr>
                       <th className="text-left text-[12px] font-semibold text-zinc-400 uppercase tracking-wider pl-3 pb-2 w-44">Angajat</th>
                       {days.map((d,i)=>(
-                        <th key={i} className={`text-center text-[11px] font-semibold uppercase tracking-wide pb-2 w-[108px] ${isSarbatoare(d)?'text-amber-400':'text-zinc-400'}`}>
-                          {DAY_FULL[i]}<br/><span className="text-[11px] font-normal opacity-60 normal-case">{fmtDate(d)}</span>
+                        <th key={i} className={`text-center text-[12px] font-semibold uppercase tracking-wider pb-2 w-[88px] ${isSarbatoare(d)?'text-amber-400':'text-zinc-400'}`}>
+                          {DAY_SHORT[i]}<br/><span className="text-[11px] font-normal opacity-60">{fmtDate(d)}</span>
                         </th>
                       ))}
                     </tr>
@@ -3651,7 +3645,7 @@ export default function RotaFlow() {
                                       ? 'Click = Z/L · Click dr = N/L · din nou = șterge'
                                       : 'Click stg = Z · Click dr = N · din nou = șterge'
                                   }
-                                  className={`relative group text-[14px] font-bold py-3.5 px-2 rounded-lg transition-all select-none tracking-tight
+                                  className={`relative group text-[13px] font-black py-3 px-2 rounded-xl transition-all select-none
                                     ${styleRunnerSau}
                                     ${t.swapped?'ring-2 ring-amber-400/60':''}
                                     ${hasManualOverride?'ring-2 ring-white/30':''}
@@ -3673,10 +3667,8 @@ export default function RotaFlow() {
                                       <span className="text-[11px]">💼</span>
                                       <span className="text-[7px] font-bold text-teal-400/80 tracking-wider uppercase">birou</span>
                                     </div>
-                                  ) : baseType==='L' ? (
-                                    <span className="text-zinc-700">—</span>
                                   ) : (
-                                    <span className={dispLabelFull(baseType).length > 5 ? 'text-[12px]' : 'text-[14px]'}>{dispLabelFull(baseType)}</span>
+                                    dispLabel(t.label)
                                   )}
                                   {sarb&&!['L','CO','CM','AN','B'].includes(baseType)&&<span className="absolute -top-1.5 -right-1 text-amber-400 text-[10px]">★</span>}
                                   {hasManualOverride&&<span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-white/50"/>}
@@ -3704,22 +3696,26 @@ export default function RotaFlow() {
                 {locatieActiva === 'PLO' ? (
                   // Legenda PLO — clase hardcodate (Tailwind purge)
                   <>
-                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-orange-400/[0.15] border-l-4 border-orange-400"/>Zi</div>
-                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-violet-400/[0.15] border-l-4 border-violet-500"/>Noapte</div>
+                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-sky-800/70 border border-sky-400/50 flex items-center justify-center text-[9px] font-black text-sky-100">Z</div>Zi</div>
+                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-purple-800/70 border border-purple-400/50 flex items-center justify-center text-[9px] font-black text-purple-100">N</div>Noapte</div>
                     <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-white/[0.03] border border-white/10 flex items-center justify-center text-[9px] text-zinc-600">L</div>Liber</div>
-                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-red-400/[0.15] border-l-4 border-red-500"/>Concediu</div>
-                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-pink-400/[0.15] border-l-4 border-pink-500"/>Medical</div>
-                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-zinc-500/[0.15] border-l-4 border-zinc-500"/>Abs. Nemot.</div>
+                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-rose-800/60 border border-rose-400/40 flex items-center justify-center text-[9px] font-black text-rose-100">CO</div>Concediu</div>
+                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-orange-800/60 border border-orange-400/50 flex items-center justify-center text-[9px] font-black text-orange-100">CM</div>Medical</div>
+                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-red-800/70 border border-red-400/50 flex items-center justify-center text-[9px] font-black text-red-100">AN</div>Abs. Nemot.</div>
                     <div className="flex items-center gap-2 text-[12px] text-zinc-400"><span className="text-amber-400/80 text-[11px]">↔</span>Swap</div>
                     <div className="flex items-center gap-2 text-[12px] text-zinc-400"><span className="text-amber-400">★</span>Sărbătoare</div>
                   </>
                 ) : (
                   // Legenda locatie activa (CTA sau orice alta locatie 12h)
                   <>
-                    <div className="flex items-center gap-1.5 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-orange-400/[0.15] border-l-4 border-orange-400"/>Zi</div>
-                    <div className="flex items-center gap-1.5 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-violet-400/[0.15] border-l-4 border-violet-500"/>Noapte</div>
+                    {CTA_LEGENDA.map(({cod,label,cls})=>(
+                      <div key={cod} className="flex items-center gap-1.5 text-[12px] text-zinc-400">
+                        <div className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold ${cls}`}>{cod}</div>
+                        <span>{label}</span>
+                      </div>
+                    ))}
                     <div className="flex items-center gap-1.5 text-[12px] text-zinc-400">
-                      <div className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold bg-red-400/[0.15] text-red-300 border-l-4 border-red-500">CO</div>
+                      <div className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold bg-rose-800/60 text-rose-100 border border-rose-400/40">CO</div>
                       <span>Concediu</span>
                     </div>
                     <div className="flex items-center gap-1.5 text-[12px] text-zinc-400">
