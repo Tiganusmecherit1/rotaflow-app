@@ -1224,6 +1224,19 @@ export default function RotaFlow() {
       // Certificari / calificari
       fetch('/api/certificari').then(r=>r.ok?r.json():null).then(json => { if (json?.certificari) setCertificari(json.certificari); }).catch(()=>{});
 
+      // Alocari de runner (cine acopera pe cine) — persistente, ca sa supravietuiasca unui refresh
+      fetch('/api/runner-alocari').then(r=>r.ok?r.json():null).then(json => {
+        if (!json?.alocari) return;
+        const noulOverride: Record<number, {dataStartCiclu:string;perioadaStart:string;perioadaSfarsit:string}> = {};
+        const noulAsignat: Record<string, number> = {};
+        for (const a of json.alocari) {
+          noulOverride[a.runner_pozitie] = { dataStartCiclu: a.data_start_ciclu, perioadaStart: a.perioada_start, perioadaSfarsit: a.perioada_sfarsit };
+          noulAsignat[`${a.angajat_acoperit_pozitie}_${a.perioada_start}`] = a.runner_pozitie;
+        }
+        setRunnerCicluOverride(noulOverride);
+        setRunnerAsignat(noulAsignat);
+      }).catch(()=>{});
+
       const logAdaptat: LogEntry[] = sbIstoric.map(l => ({
         ts: new Date(l.created_at).toLocaleDateString('ro-RO', { day:'2-digit', month:'2-digit', year:'numeric' }) + ' ' + new Date(l.created_at).toLocaleTimeString('ro-RO', { hour:'2-digit', minute:'2-digit' }),
         msg: l.mesaj,
@@ -1957,10 +1970,27 @@ export default function RotaFlow() {
         const sf = new Date(dataSfarsit + 'T00:00:00');
         let sfE = new Date(sf);
         const dow = sf.getDay();
+        // Extindere identica cu regula reala din inCO: doar Vineri/Sambata extind spre Duminica.
+        // Luni-Joi NU extind deloc (angajatul revine normal a doua zi) — formula veche extindea
+        // gresit orice zi Luni-Joi pana Sambata, tinand runnerul alocat 2-3 zile in plus, degeaba.
+        // Extindere identica cu regula reala din inCO: Vineri extinde mereu spre Duminica.
+        // Sambata extinde spre Duminica DOAR daca Vinerea dinainte e si ea acoperita de concediu
+        // (altfel un concediu de-o singura zi, chiar Sambata, ar extinde gresit spre Duminica).
         if (dow === 5) sfE = new Date(sf.getTime() + 2*86400000);
-        else if (dow >= 1 && dow <= 4) sfE = new Date(sf.getTime() + (6-dow)*86400000);
-        setRunnerCicluOverride(prev => ({...prev, [runnerId]: {dataStartCiclu: angajat.dataStartCiclu!, perioadaStart: dataStart, perioadaSfarsit: fmtDateInput(sfE)}}));
-        addLog(`Runner ${ra.nume} -> acopera ${angajat.nume} (${dataStart}–${fmtDateInput(sfE)})`);
+        else if (dow === 6) {
+          const vineriDinainte = new Date(sf.getTime() - 86400000);
+          if (vineriDinainte >= new Date(dataStart + 'T00:00:00')) sfE = new Date(sf.getTime() + 1*86400000);
+        }
+        const perioadaSfarsitFinal = fmtDateInput(sfE);
+        setRunnerCicluOverride(prev => ({...prev, [runnerId]: {dataStartCiclu: angajat.dataStartCiclu!, perioadaStart: dataStart, perioadaSfarsit: perioadaSfarsitFinal}}));
+        addLog(`Runner ${ra.nume} -> acopera ${angajat.nume} (${dataStart}–${perioadaSfarsitFinal})`);
+        fetch('/api/runner-alocari', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            runner_pozitie: runnerId, angajat_acoperit_pozitie: angajat.id, angajat_acoperit_uuid: angajat.uuid,
+            data_start_ciclu: angajat.dataStartCiclu, perioada_start: dataStart, perioada_sfarsit: perioadaSfarsitFinal,
+          }),
+        }).catch(err => console.error('Eroare salvare alocare runner:', err));
       }
     }
     setAbsentaPopup(null);
@@ -1980,13 +2010,24 @@ export default function RotaFlow() {
     setEchipa(prev=>prev.map((m,i)=>i!==pi?m:{...m,zileCO:m.zileCO+zl,concedii:m.concedii.filter((_,k)=>k!==ci)}));
     addLog(`CO șters: ${angajatTarget.nume} — ${c.n}`);
 
+    // IMPORTANT: daca un runner acoperea exact acest concediu, il eliberam automat —
+    // altfel ramane "agatat" acolo, oglindind ciclul lui angajatTarget la infinit,
+    // chiar dupa ce concediul care l-a declansat a disparut.
+    const runnerIdLegat = runnerAsignat[`${angajatTarget.id}_${c.s}`];
+    if (runnerIdLegat != null) {
+      setRunnerCicluOverride(prev => { const n = {...prev}; delete n[runnerIdLegat]; return n; });
+      setRunnerAsignat(prev => { const n = {...prev}; delete n[`${angajatTarget.id}_${c.s}`]; return n; });
+      const numeRunner = echipa.find(r=>r.id===runnerIdLegat)?.nume ?? `#${runnerIdLegat}`;
+      addLog(`Runner ${numeRunner} eliberat automat (concediul pe care-l acoperea a fost șters)`);
+    }
+
     if (c.uuid) {
       apiStergeConcediu(c.uuid).catch(err => {
         console.error('Eroare la stergerea CO din Supabase:', err);
         incarcaTotul();
       });
     }
-  }, [setEchipa, addLog, echipa, incarcaTotul]);
+  }, [setEchipa, addLog, echipa, incarcaTotul, runnerAsignat]);
 
 
   const aplicaUrgenta = () => {
@@ -2794,10 +2835,10 @@ export default function RotaFlow() {
             <span className="font-bold text-[16px] tracking-tight">RotaFlow</span>
 
             {/* ── Selector Locatie ── */}
-            <div className="h-9 flex items-center gap-1 bg-white/[0.05] border border-white/[0.08] rounded-xl p-1">
+            <div className="h-11 flex items-center gap-1 bg-white/[0.05] border border-white/[0.08] rounded-xl p-1">
               <button
                 onClick={()=>setLocatieActiva('PLO')}
-                className={`h-full flex items-center gap-1.5 px-3.5 rounded-lg text-[12.5px] font-bold transition-all duration-150 ${
+                className={`h-full flex items-center gap-2 px-5 rounded-lg text-[14px] font-bold transition-all duration-150 ${
                   locatieActiva==='PLO'
                     ? 'bg-[#0078d4] text-white shadow-md shadow-[#0078d4]/25'
                     : 'text-zinc-400 hover:text-white'
@@ -2806,7 +2847,7 @@ export default function RotaFlow() {
               </button>
               <button
                 onClick={()=>setLocatieActiva('CTA')}
-                className={`h-full flex items-center gap-1.5 px-3.5 rounded-lg text-[12.5px] font-bold transition-all duration-150 ${
+                className={`h-full flex items-center gap-2 px-5 rounded-lg text-[14px] font-bold transition-all duration-150 ${
                   locatieActiva==='CTA'
                     ? 'bg-amber-600 text-white shadow-md shadow-amber-600/25'
                     : 'text-zinc-400 hover:text-white'
@@ -4621,6 +4662,7 @@ export default function RotaFlow() {
                                           value={runnerAsignat[`${m.id}_${c.s}`] ?? ''}
                                           onChange={e => {
                                             const val = e.target.value ? Number(e.target.value) : null;
+                                            const runnerAnteriorAsignat = runnerAsignat[`${m.id}_${c.s}`];
                                             setRunnerAsignat(prev => ({...prev, [`${m.id}_${c.s}`]: val}));
                                             if (val !== null) {
                                               const dataStartAbsent = m.dataStartCiclu ?? c.s;
@@ -4628,12 +4670,15 @@ export default function RotaFlow() {
                                               // Extindem perioada sa includa Sa/Du adiacente (angajatul lipseste fizic)
                                               const sfarsitCO = new Date(c.e + 'T00:00:00');
                                               let sfarsitExtins = new Date(sfarsitCO);
-                                              // Daca CO se termina Vineri → extindem pana Duminica
+                                              // Extindere identica cu regula reala din inCO: doar Vineri/Sambata
+                                              // extind spre Duminica. Luni-Joi NU extind (revine normal a doua zi).
+                                              // Extindere identica cu regula reala din inCO: Vineri extinde mereu spre
+                                              // Duminica. Sambata extinde DOAR daca Vinerea dinainte e si ea in concediu.
                                               if (sfarsitCO.getDay() === 5) sfarsitExtins = new Date(sfarsitCO.getTime() + 2*86400000);
-                                              // Daca CO se termina Joi → extindem pana Duminica
-                                              else if (sfarsitCO.getDay() === 4) sfarsitExtins = new Date(sfarsitCO.getTime() + 3*86400000);
-                                              // Daca CO se termina Miercuri → extindem pana Duminica
-                                              else if (sfarsitCO.getDay() === 3) sfarsitExtins = new Date(sfarsitCO.getTime() + 4*86400000);
+                                              else if (sfarsitCO.getDay() === 6) {
+                                                const vineriDinainte = new Date(sfarsitCO.getTime() - 86400000);
+                                                if (vineriDinainte >= new Date(c.s + 'T00:00:00')) sfarsitExtins = new Date(sfarsitCO.getTime() + 1*86400000);
+                                              }
                                               const perioadaSfarsitExtins = fmtDateInput(sfarsitExtins);
 
                                               setRunnerAsignat(prev => ({...prev, [`${m.id}_${c.s}`]: val}));
@@ -4647,9 +4692,19 @@ export default function RotaFlow() {
                                               }));
                                               setRunneriActivi(prev => { const n=new Set(prev); n.delete(val); return n; });
                                               addLog(`Runner ${echipa.find(r=>r.id===val)?.nume} asignat → acoperire ${c.s} – ${perioadaSfarsitExtins}`);
+                                              fetch('/api/runner-alocari', {
+                                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({
+                                                  runner_pozitie: val, angajat_acoperit_pozitie: m.id, angajat_acoperit_uuid: m.uuid,
+                                                  data_start_ciclu: dataStartAbsent, perioada_start: c.s, perioada_sfarsit: perioadaSfarsitExtins,
+                                                }),
+                                              }).catch(err => console.error('Eroare salvare alocare runner:', err));
                                             } else {
                                               setRunnerAsignat(prev => ({...prev, [`${m.id}_${c.s}`]: null}));
-                                              setRunnerCicluOverride(prev => { const n={...prev}; delete n[val!]; return n; });
+                                              if (runnerAnteriorAsignat != null) {
+                                                setRunnerCicluOverride(prev => { const n={...prev}; delete n[runnerAnteriorAsignat]; return n; });
+                                                fetch(`/api/runner-alocari?runner_pozitie=${runnerAnteriorAsignat}`, { method: 'DELETE' }).catch(err => console.error('Eroare eliberare runner:', err));
+                                              }
                                             }
                                           }}
                                           className="bg-[#1c1c1e] border border-white/10 rounded-lg px-2 py-0.5 text-[10px] text-zinc-300 outline-none cursor-pointer"
