@@ -771,16 +771,16 @@ function analizeazaConformitate(echipa: Angajat[], simConcedii: SimConcediu[], s
 
 
 const SHIFT_STYLE: Record<string, string> = {
-  D:  'bg-yellow-400/[0.09] text-yellow-300 border-l-4 border-yellow-400',
-  S:  'bg-emerald-400/[0.09] text-emerald-300 border-l-4 border-emerald-500',
+  D:  'bg-orange-400/[0.09] text-orange-300 border-l-4 border-orange-400',
+  S:  'bg-violet-400/[0.09] text-violet-300 border-l-4 border-violet-500',
   L:  'bg-white/[0.03] text-zinc-600 border-l-4 border-transparent',
   CO: 'bg-red-400/[0.09] text-red-300 border-l-4 border-red-500',
-  CM: 'bg-orange-400/[0.09] text-orange-300 border-l-4 border-orange-500',
+  CM: 'bg-pink-400/[0.09] text-pink-300 border-l-4 border-pink-500',
   AN: 'bg-zinc-500/[0.12] text-zinc-300 border-l-4 border-zinc-500',
-  Z:  'bg-yellow-400/[0.09] text-yellow-300 border-l-4 border-yellow-400',
-  N:  'bg-emerald-400/[0.09] text-emerald-300 border-l-4 border-emerald-500',
+  Z:  'bg-orange-400/[0.09] text-orange-300 border-l-4 border-orange-400',
+  N:  'bg-violet-400/[0.09] text-violet-300 border-l-4 border-violet-500',
   B:  'bg-white/[0.04] text-zinc-400 border-l-4 border-zinc-600',   // Birou L-V
-  R:  'bg-orange-400/[0.09] text-orange-300 border-l-4 border-orange-500', // Runner activ
+  R:  'bg-teal-400/[0.09] text-teal-300 border-l-4 border-teal-500', // Runner activ
   PLO: 'bg-blue-400/[0.09] text-blue-300 border-l-4 border-blue-500 animate-pulse', // Runner plecat la PLO (criza)
   DISP: 'bg-amber-400/[0.09] text-amber-300 border-l-4 border-amber-500', // Runner disponibil ca suplinitor
 };
@@ -3704,11 +3704,11 @@ export default function RotaFlow() {
                 {locatieActiva === 'PLO' ? (
                   // Legenda PLO — clase hardcodate (Tailwind purge)
                   <>
-                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-yellow-400/[0.15] border-l-4 border-yellow-400"/>Zi</div>
-                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-emerald-400/[0.15] border-l-4 border-emerald-500"/>Noapte</div>
+                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-orange-400/[0.15] border-l-4 border-orange-400"/>Zi</div>
+                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-violet-400/[0.15] border-l-4 border-violet-500"/>Noapte</div>
                     <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-white/[0.03] border border-white/10 flex items-center justify-center text-[9px] text-zinc-600">L</div>Liber</div>
                     <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-red-400/[0.15] border-l-4 border-red-500"/>Concediu</div>
-                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-orange-400/[0.15] border-l-4 border-orange-500"/>Medical</div>
+                    <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-pink-400/[0.15] border-l-4 border-pink-500"/>Medical</div>
                     <div className="flex items-center gap-2 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-zinc-500/[0.15] border-l-4 border-zinc-500"/>Abs. Nemot.</div>
                     <div className="flex items-center gap-2 text-[12px] text-zinc-400"><span className="text-amber-400/80 text-[11px]">↔</span>Swap</div>
                     <div className="flex items-center gap-2 text-[12px] text-zinc-400"><span className="text-amber-400">★</span>Sărbătoare</div>
@@ -3716,8 +3716,8 @@ export default function RotaFlow() {
                 ) : (
                   // Legenda locatie activa (CTA sau orice alta locatie 12h)
                   <>
-                    <div className="flex items-center gap-1.5 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-yellow-400/[0.15] border-l-4 border-yellow-400"/>Zi</div>
-                    <div className="flex items-center gap-1.5 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-emerald-400/[0.15] border-l-4 border-emerald-500"/>Noapte</div>
+                    <div className="flex items-center gap-1.5 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-orange-400/[0.15] border-l-4 border-orange-400"/>Zi</div>
+                    <div className="flex items-center gap-1.5 text-[12px] text-zinc-400"><div className="w-4 h-4 rounded-md bg-violet-400/[0.15] border-l-4 border-violet-500"/>Noapte</div>
                     <div className="flex items-center gap-1.5 text-[12px] text-zinc-400">
                       <div className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold bg-red-400/[0.15] text-red-300 border-l-4 border-red-500">CO</div>
                       <span>Concediu</span>
